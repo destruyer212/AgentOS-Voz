@@ -1,0 +1,135 @@
+# AgentOS Voz
+
+Plataforma para crear agentes de IA que no solo conversan, sino que ejecutan
+procesos de negocio reales: piden un pedido, validan stock, cobran el precio
+correcto, confirman, reservan inventario y notifican -- por chat, por
+telefono, o por voz de navegador.
+
+El primer caso de uso (para validar el motor completo) es un restaurante:
+
+```text
+Cliente llama o escribe
+  -> el agente conversa y entiende la intencion
+  -> normaliza productos contra el catalogo real
+  -> valida stock y calcula el precio
+  -> pide confirmacion
+  -> crea el pedido (transaccion real, stock descontado)
+  -> programa la entrega
+  -> notifica la confirmacion
+```
+
+No es un chatbot que "suena inteligente". Es un runtime de agente + reglas de
+negocio deterministas + un motor de workflows, con el LLM limitado a
+interpretar y elegir herramientas -- nunca a decidir la verdad contable u
+operacional.
+
+## Estado actual
+
+Esto ya funciona de punta a punta, no es solo un plan:
+
+| Pieza | Estado |
+| --- | --- |
+| Core de negocio (clientes, productos, stock, pedidos, multi-tenant) | Funcionando |
+| NLU en espanol (reglas propias + Gemini real, con fallback automatico) | Funcionando |
+| Motor de tools (unica puerta de entrada del agente al negocio) | Funcionando |
+| Motor de workflows (pasos, condiciones, auditoria de ejecucion) | Funcionando |
+| Frontend (dashboard, chat con el agente, pedidos, productos, clientes, auditoria) | Funcionando |
+| Telefonia real -- Twilio | Integrado (falta numero verificado) |
+| Telefonia real -- Telnyx | Integrado y probado con numero real |
+| Voz por navegador (WebRTC) | No empezado |
+| Auth / RBAC | No empezado |
+
+El caso de uso completo -- "Hola, quiero dos hamburguesas dobles, una sin
+cebolla, tres Inca Colas para las ocho" hasta pedido confirmado con stock
+descontado -- funciona hoy por **chat web, API, y llamada telefonica real**.
+
+## Probarlo en unos minutos
+
+```bash
+# Backend
+cd backend
+python -m venv .venv
+./.venv/Scripts/pip install -e .
+cp .env.example .env          # opcional: agregar GEMINI_API_KEY para NLU real
+./.venv/Scripts/uvicorn app.main:app --reload
+
+# Frontend (en otra terminal)
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev
+```
+
+Abre `http://localhost:3000` y habla con el agente en la pestaña **Agente**.
+Sin `GEMINI_API_KEY` el sistema sigue funcionando con un NLU basado en reglas
+(cero costo, cero configuracion). Detalle completo en
+[backend/README.md](backend/README.md) y [frontend/README.md](frontend/README.md).
+
+## Arquitectura
+
+```text
+Canales
+  Chat web | API | Llamada telefonica (Twilio / Telnyx) | Voz navegador (pendiente)
+    |
+Agent Runtime
+  estado de conversacion, memoria de turno, handoff a humano
+    |
+AI Router
+  interfaz intercambiable: Gemini (real) | reglas propias (sin costo)
+    |
+Tool Registry
+  unica puerta de entrada al negocio -- el LLM nunca toca la DB directo
+    |
+Workflow Engine
+  pasos, condiciones, reintentos, traza de ejecucion auditable
+    |
+Domain Core
+  clientes, productos, inventario, pedidos -- reglas deterministas en codigo
+    |
+Data
+  PostgreSQL o SQLite | audit log completo
+```
+
+Regla de oro, en cualquier canal:
+
+```text
+LLM -> Tool -> Domain Service -> DB transaction
+```
+
+## Estructura
+
+```text
+AgentOS Voz/
+├── backend/            FastAPI: runtime del agente, dominio, tools, workflows, telefonia
+│   └── app/
+│       ├── api/            endpoints HTTP y webhooks
+│       ├── agents/          runtime conversacional y memoria de conversacion
+│       ├── ai/              proveedores de IA (Gemini, reglas) intercambiables
+│       ├── workflows/       motor de pasos/condiciones y definiciones
+│       ├── domain/          modelos, schemas y reglas de negocio
+│       ├── tools/           unica puerta de entrada del agente al negocio
+│       ├── integrations/    Twilio, Telnyx, notificaciones
+│       └── infrastructure/  config, base de datos, seed de demo
+├── frontend/           Next.js: dashboard, chat, pedidos, productos, clientes, auditoria
+├── docs/               vision, arquitectura y decisiones tecnicas del proyecto
+└── infra/
+```
+
+## Stack
+
+| Capa | Tecnologia |
+| --- | --- |
+| Backend | Python + FastAPI + SQLAlchemy async |
+| Base de datos | SQLite (dev) / PostgreSQL (produccion) |
+| IA | Gemini (real) con fallback a NLU por reglas propias |
+| Frontend | Next.js 15 + TypeScript + Tailwind (Server Components + Server Actions) |
+| Telefonia | Twilio Voice y Telnyx Call Control (ambos reusan el mismo runtime del agente) |
+
+## Lo que falta
+
+- Voz por navegador (WebRTC) -- para probar el agente hablando desde el navegador antes de ir a telefonia real.
+- Auth / RBAC -- hoy no hay login; cualquiera que le pegue a la API opera como el tenant demo.
+- Postgres + Redis en Docker Compose para un entorno de "produccion chica" real.
+- Generalizar el dominio mas alla de restaurante (hoteles, clinicas, talleres...) -- el motor ya es generico, el modelo de datos y los prompts todavia estan pensados en restaurante.
+
+Ver [docs/](docs/) para la vision completa y el roadmap por sprints.
