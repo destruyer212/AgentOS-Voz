@@ -102,6 +102,7 @@ export interface ConversationOut {
   id: string;
   channel: ConversationChannel;
   status: "active" | "closed" | string;
+  detail_status: ConversationStatus | null;
   customer_name: string | null;
   customer_phone: string | null;
   outcome: string | null;

@@ -2,7 +2,7 @@ import { Phone } from "lucide-react";
 import Link from "next/link";
 import { ChannelBadge, Pill } from "@/components/Badge";
 import { EmptyState } from "@/components/EmptyState";
-import { formatDateTime, intentLabel } from "@/lib/format";
+import { callStage, formatDateTime, intentLabel } from "@/lib/format";
 import type { ConversationOut } from "@/lib/types";
 
 export function ConversationsTable({ conversations }: { conversations: ConversationOut[] }) {
@@ -47,7 +47,7 @@ export function ConversationsTable({ conversations }: { conversations: Conversat
                       {convo.status === "active" ? (
                         <Pill tone="info">
                           <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand-400" />
-                          en curso
+                          {callStage({ status: convo.status, detail_status: convo.detail_status, outcome: convo.outcome }).label}
                         </Pill>
                       ) : (
                         <Pill tone="neutral">{convo.outcome ? intentLabel(convo.outcome) : "cerrada"}</Pill>

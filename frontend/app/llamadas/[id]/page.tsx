@@ -6,6 +6,7 @@ import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { ChannelBadge, Pill } from "@/components/Badge";
 import { LiveRefresher } from "@/components/LiveRefresher";
 import { OrderSummaryCard } from "@/features/agent/OrderSummaryCard";
+import { CallFlowPipeline } from "@/features/conversations/CallFlowPipeline";
 import { ConversationTranscript } from "@/features/conversations/ConversationTranscript";
 import { ApiError, api } from "@/lib/api";
 import { formatDateTime, intentLabel } from "@/lib/format";
@@ -56,6 +57,10 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
         ) : (
           <Pill tone="neutral">{convo.outcome ? intentLabel(convo.outcome) : "Cerrada"}</Pill>
         )}
+      </div>
+
+      <div className="mb-6">
+        <CallFlowPipeline status={convo.status} detailStatus={convo.detail_status} outcome={convo.outcome} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">

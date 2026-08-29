@@ -80,3 +80,52 @@ export const FULFILLMENT_LABEL: Record<string, string> = {
 export function fulfillmentLabel(type: string): string {
   return FULFILLMENT_LABEL[type] ?? type;
 }
+
+// Etapas del flujo de una llamada/chat, en el orden real en que ocurren.
+// Se derivan de datos reales del backend (status + detail_status del
+// agente -- ver ConversationState.status en agents/runtime.py), nunca
+// inventadas: si el backend no mando detail_status todavia (conversacion
+// vieja, de antes de que existiera ese campo), cae en "connected" en vez
+// de fingir una etapa que no se puede confirmar.
+export type CallStageKey = "connected" | "choosing" | "details" | "confirming" | "confirmed" | "ended";
+
+export interface CallStageInfo {
+  key: CallStageKey;
+  index: number; // 0-4, posicion en la barra de progreso (confirmed y ended comparten la ultima)
+  label: string;
+}
+
+const STAGE_ORDER: CallStageKey[] = ["connected", "choosing", "details", "confirming", "confirmed"];
+
+export const CALL_STAGE_LABEL: Record<CallStageKey, string> = {
+  connected: "Llamada conectada",
+  choosing: "Eligiendo productos",
+  details: "Completando datos",
+  confirming: "Confirmando pedido",
+  confirmed: "Pedido confirmado",
+  ended: "Llamada finalizada",
+};
+
+const DETAIL_STATUS_STAGE: Record<string, CallStageKey> = {
+  collecting: "choosing",
+  need_name: "details",
+  need_fulfillment: "details",
+  need_address: "details",
+  need_payment: "details",
+  awaiting_confirmation: "confirming",
+};
+
+export function callStage(input: {
+  status: string;
+  detail_status: string | null;
+  outcome: string | null;
+}): CallStageInfo {
+  let key: CallStageKey;
+  if (input.status === "closed") {
+    key = input.outcome === "order.confirm" ? "confirmed" : "ended";
+  } else {
+    key = (input.detail_status && DETAIL_STATUS_STAGE[input.detail_status]) || "connected";
+  }
+  const index = STAGE_ORDER.indexOf(key === "ended" ? "confirmed" : key);
+  return { key, index: index === -1 ? 0 : index, label: CALL_STAGE_LABEL[key] };
+}
