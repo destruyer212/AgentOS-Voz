@@ -13,6 +13,11 @@ body {
 
 body {
   @apply bg-surface-950 text-slate-200 antialiased;
+  background-image:
+    linear-gradient(rgba(34, 200, 230, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 200, 230, 0.03) 1px, transparent 1px),
+    linear-gradient(135deg, #07090d 0%, #0a0d13 45%, #050608 100%);
+  background-size: 36px 36px, 36px 36px, auto;
 }
 
 ::selection {
@@ -51,6 +56,31 @@ body {
   }
 }
 
+.hud-scanline {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(77, 216, 240, 0.12) 50%,
+    transparent 100%
+  );
+  animation: scanline 4.5s linear infinite;
+}
+
+.hud-radar-sweep {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(77, 216, 240, 0.32) 36deg,
+    transparent 82deg,
+    transparent 360deg
+  );
+  animation: radar-sweep 6s linear infinite;
+}
+
+.hud-orbit {
+  animation: radar-sweep 11s linear infinite;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -64,4 +94,19 @@ body {
 
 .animate-fade-in {
   animation: fade-in 0.25s ease-out;
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(120%);
+  }
+}
+
+@keyframes radar-sweep {
+  to {
+    transform: rotate(360deg);
+  }
 }

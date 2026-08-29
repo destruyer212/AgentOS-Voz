@@ -129,6 +129,14 @@ export interface ConversationDetailOut extends ConversationOut {
   order: OrderOut | null;
 }
 
+export interface BusinessInfoOut {
+  restaurant_name: string;
+  day_name: string;
+  is_open: boolean;
+  open_time: string;
+  close_time: string;
+}
+
 export interface AuditLogEntry {
   id: number;
   actor: string;

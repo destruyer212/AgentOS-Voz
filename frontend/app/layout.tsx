@@ -19,18 +19,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es" className={`${sans.variable} ${mono.variable}`}>
       <body className="font-sans">
         <div className="relative flex h-screen overflow-hidden">
-          {/* Glow ambiental sutil, fijo, no interactivo -- da el aire "consola de operaciones" sin competir con el contenido. */}
           <div
-            className="pointer-events-none fixed inset-0 z-0 opacity-60"
+            className="pointer-events-none fixed inset-0 z-0 opacity-80"
             aria-hidden
             style={{
               background:
-                "radial-gradient(60rem 30rem at 15% -10%, rgba(109,109,247,0.10), transparent 60%), radial-gradient(50rem 26rem at 100% 10%, rgba(45,212,191,0.06), transparent 60%)",
+                "linear-gradient(90deg, rgba(77,216,240,0.08), transparent 18%, transparent 82%, rgba(45,212,191,0.07)), linear-gradient(180deg, rgba(255,255,255,0.03), transparent 32%)",
             }}
           />
           <Sidebar />
           <main className="relative z-10 flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-6xl px-8 py-8">{children}</div>
+            <div className="mx-auto max-w-[1500px] px-6 py-6 lg:px-8">{children}</div>
           </main>
         </div>
       </body>

@@ -7,6 +7,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Phone,
+  SignalHigh,
   ScrollText,
   UtensilsCrossed,
   Users,
@@ -33,15 +34,17 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-surface-700 bg-surface-900">
-      <div className="flex items-center gap-2.5 px-5 py-6">
-        <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-brand-400 to-brand-700 shadow-panel">
-          <div className="absolute inset-0 rounded-lg bg-brand-500/40 blur-md" aria-hidden />
-          <Bot size={18} className="relative text-white" />
+    <aside className="relative z-20 flex h-full w-64 shrink-0 flex-col border-r border-hud-500/20 bg-surface-950/85 backdrop-blur-xl">
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-px bg-gradient-to-b from-transparent via-hud-400/50 to-transparent" />
+
+      <div className="flex items-center gap-3 px-5 py-6">
+        <div className="relative flex h-10 w-10 items-center justify-center border border-hud-400/40 bg-hud-500/10 shadow-hud">
+          <span className="absolute inset-1 border border-hud-300/20" />
+          <SignalHigh size={19} className="relative text-hud-300" />
         </div>
         <div className="leading-tight">
           <p className="text-sm font-semibold text-white">AgentOS Voz</p>
-          <p className="text-xs text-slate-500">Panel de control</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-hud-400/80">Command OS</p>
         </div>
       </div>
 
@@ -53,18 +56,22 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              className={`group relative flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors ${
                 active
-                  ? "bg-brand-500/15 text-brand-400"
-                  : "text-slate-400 hover:bg-surface-800 hover:text-slate-200"
+                  ? "border border-hud-400/45 bg-hud-500/10 text-hud-300 shadow-hud"
+                  : "border border-transparent text-slate-400 hover:border-hud-500/20 hover:bg-surface-800/70 hover:text-slate-200"
               }`}
+              style={{
+                clipPath:
+                  "polygon(0 8px, 8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%)",
+              }}
             >
               {active && (
-                <span className="absolute -left-3 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-brand-400 shadow-[0_0_8px_1px_rgba(139,139,249,0.7)]" />
+                <span className="absolute -left-3 top-1/2 h-6 w-0.5 -translate-y-1/2 bg-hud-300 shadow-[0_0_12px_1px_rgba(77,216,240,0.9)]" />
               )}
               <Icon
                 size={17}
-                className={active ? "text-brand-400" : "text-slate-500 group-hover:text-slate-300"}
+                className={active ? "text-hud-300" : "text-slate-500 group-hover:text-hud-300"}
               />
               {item.label}
             </Link>
@@ -72,15 +79,15 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-surface-700 px-4 py-4">
-        <div className="flex items-center gap-2 rounded-lg bg-surface-800 px-3 py-2.5">
+      <div className="border-t border-hud-500/15 px-4 py-4">
+        <div className="flex items-center gap-3 border border-surface-700/80 bg-surface-900/70 px-3 py-3">
           <span className="relative flex h-1.5 w-1.5 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-teal opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent-teal" />
           </span>
           <div className="min-w-0 leading-tight">
             <p className="truncate text-xs font-medium text-slate-300">El Olivar Grill</p>
-            <p className="text-[11px] text-slate-500">Puente Piedra</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Puente Piedra</p>
           </div>
         </div>
       </div>

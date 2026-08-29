@@ -9,6 +9,7 @@ import type {
   CustomerCreateIn,
   CustomerOut,
   CustomerUpdateIn,
+  BusinessInfoOut,
   OrderOut,
   ProductOut,
   WorkflowRunEntry,
@@ -92,5 +93,6 @@ export const api = {
   system: {
     auditLogs: (limit = 50) => request<AuditLogEntry[]>(`/system/audit-logs${qs({ limit })}`),
     workflowRuns: (limit = 20) => request<WorkflowRunEntry[]>(`/system/workflow-runs${qs({ limit })}`),
+    businessInfo: () => request<BusinessInfoOut>("/system/business-info"),
   },
 };
