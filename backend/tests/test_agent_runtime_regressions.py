@@ -99,7 +99,8 @@ async def test_pending_name_does_not_swallow_generic_missing_beverage_phrase():
             assert state.status == "collecting"
             assert state.customer
             assert state.customer["name"] == "Cliente telefonico"
-            assert "bebida prefieres" in second.response.lower()
+            assert "en bebidas tenemos" in second.response.lower()
+            assert "cuál prefieres" in second.response.lower()
     finally:
         reset(conversation_id)
 

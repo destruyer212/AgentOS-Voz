@@ -237,7 +237,10 @@ def _pending_clarification_question(state: ConversationState) -> str | None:
     if not pending:
         return None
     query = pending.get("query") or "producto"
-    options = ", ".join(option["name"] for option in (pending.get("options") or [])[:4])
+    options = ", ".join(
+        f"{option['name']} a {_format_money_for_voice(option['price'])}" if "price" in option else option["name"]
+        for option in (pending.get("options") or [])[:4]
+    )
     return f"¿Cuál {query} prefieres: {options}?" if options else None
 
 
@@ -669,8 +672,21 @@ class AgentRuntime:
                     menu_result = await self._call_tool(tool_calls, "products.menu", {"category": category})
                     options = menu_result.get("products", [])
                     if options:
-                        option_names = ", ".join(option["name"] for option in options[:5])
-                        clarifications.append(f"¿Qué {item.query} prefieres: {option_names}?")
+                        # Bug real, visto en vivo: "Quiero ofertas" -> la
+                        # respuesta vieja era "Que ofertas prefieres: Mega
+                        # Oferton, Oferton, Pollo a la Brasa para Dos, Super
+                        # Oferton?" -- 4 nombres seguidos sin precio ni pausa,
+                        # dichos por voz suenan como un solo bloque y el
+                        # cliente entendia que solo se habia mencionado una.
+                        # Mismo formato "nombre a tanto soles" que ya usa el
+                        # menu.inquiry (linea ~607), mucho mas facil de
+                        # seguir por telefono.
+                        label = _MENU_CATEGORY_LABELS.get(category, item.query)
+                        option_names = ", ".join(
+                            f"{option['name']} a {_format_money_for_voice(option['price'])}"
+                            for option in options[:5]
+                        )
+                        clarifications.append(f"En {label} tenemos: {option_names}. ¿Cuál prefieres?")
                         state.pending_clarification = {"query": item.query, "options": options[:5]}
                         continue
                 missing.append(item.raw_text)
@@ -678,8 +694,12 @@ class AgentRuntime:
 
             if result.get("ambiguous"):
                 # Termino generico ("hamburguesa") que calza igual con varias
-                # variantes: preguntamos en vez de adivinar cual.
-                options = ", ".join(c["name"] for c in candidates[:4])
+                # variantes: preguntamos en vez de adivinar cual. Con precio
+                # por la misma razon que arriba: mas facil de distinguir por
+                # telefono que una lista de nombres seguidos.
+                options = ", ".join(
+                    f"{c['name']} a {_format_money_for_voice(c['price'])}" for c in candidates[:4]
+                )
                 clarifications.append(f"¿Cuál {item.query} prefieres: {options}?")
                 ambiguous_query_tokens.append(set(tokenize(item.query)))
                 state.pending_clarification = {"query": item.query, "options": candidates[:4]}
