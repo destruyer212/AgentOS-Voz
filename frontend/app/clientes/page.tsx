@@ -16,7 +16,7 @@ export default async function ClientesPage({
   const { q } = await searchParams;
 
   try {
-    const customers = await api.customers.list(q);
+    const [customers, orders] = await Promise.all([api.customers.list(q), api.orders.list(200)]);
     return (
       <div>
         <PageHeader
@@ -26,7 +26,7 @@ export default async function ClientesPage({
         />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <CustomersTable customers={customers} />
+            <CustomersTable customers={customers} orders={orders} />
           </div>
           <NewCustomerForm />
         </div>

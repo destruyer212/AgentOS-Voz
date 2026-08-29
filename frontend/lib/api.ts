@@ -8,6 +8,7 @@ import type {
   ConversationOut,
   CustomerCreateIn,
   CustomerOut,
+  CustomerUpdateIn,
   OrderOut,
   ProductOut,
   WorkflowRunEntry,
@@ -70,10 +71,15 @@ export const api = {
     list: (q?: string, limit = 100) => request<CustomerOut[]>(`/customers${qs({ q, limit })}`),
     create: (data: CustomerCreateIn) =>
       request<CustomerOut>("/customers", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: number, data: CustomerUpdateIn) =>
+      request<CustomerOut>(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    remove: (id: number) => request<void>(`/customers/${id}`, { method: "DELETE" }),
   },
   orders: {
     list: (limit = 50) => request<OrderOut[]>(`/orders${qs({ limit })}`),
     get: (id: number) => request<OrderOut>(`/orders/${id}`),
+    updateStatus: (id: number, status: string) =>
+      request<OrderOut>(`/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   },
   agent: {
     turn: (payload: AgentMessageIn) =>

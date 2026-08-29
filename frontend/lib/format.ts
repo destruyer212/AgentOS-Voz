@@ -81,6 +81,34 @@ export function fulfillmentLabel(type: string): string {
   return FULFILLMENT_LABEL[type] ?? type;
 }
 
+// Espejo de _MENU_CATEGORY_LABELS en agents/runtime.py -- mismas categorias
+// que usa el agente para responder "que tienen de X", para que el panel
+// hable el mismo idioma que la llamada.
+export const CATEGORY_LABEL: Record<string, string> = {
+  bebida: "Bebidas",
+  bebida_caliente: "Bebidas calientes",
+  entrada: "Entradas",
+  ensalada: "Ensaladas",
+  pollo_brasa: "Pollos a la brasa",
+  oferta: "Ofertas",
+  fusion: "Fusiones",
+  parrilla_personal: "Parrillas personales",
+  parrilla_familiar: "Parrillas familiares",
+  piqueo: "Piqueos",
+  wok_criollo: "Wok criollo",
+  pasta: "Pastas",
+  chaufa: "Chaufas",
+  complemento: "Complementos",
+  menu: "Menús del día",
+  hamburguesa: "Hamburguesas",
+  acompanamiento: "Acompañamientos",
+  postre: "Postres",
+};
+
+export function categoryLabel(category: string): string {
+  return CATEGORY_LABEL[category] ?? category;
+}
+
 // Etapas del flujo de una llamada/chat, en el orden real en que ocurren.
 // Se derivan de datos reales del backend (status + detail_status del
 // agente -- ver ConversationState.status en agents/runtime.py), nunca

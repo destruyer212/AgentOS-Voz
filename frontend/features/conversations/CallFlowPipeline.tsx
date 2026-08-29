@@ -2,6 +2,7 @@
 
 import { CheckCircle2, ClipboardList, PhoneCall, PhoneOff, ShieldCheck, ShoppingCart } from "lucide-react";
 import type { ComponentType } from "react";
+import { HudPanel } from "@/components/HudPanel";
 import { CALL_STAGE_LABEL, callStage, type CallStageKey } from "@/lib/format";
 
 const STEP_KEYS: CallStageKey[] = ["connected", "choosing", "details", "confirming", "confirmed"];
@@ -35,7 +36,7 @@ export function CallFlowPipeline({
   const isLive = status !== "closed";
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-surface-700 bg-surface-900 p-5">
+    <HudPanel className="p-5" glow={isLive}>
       {isLive && (
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-brand-500/0 via-brand-500/[0.06] to-brand-500/0" />
       )}
@@ -109,6 +110,6 @@ export function CallFlowPipeline({
           );
         })}
       </div>
-    </div>
+    </HudPanel>
   );
 }

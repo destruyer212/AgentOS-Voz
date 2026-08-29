@@ -20,6 +20,8 @@ export function ConversationTranscript({ turns }: { turns: ConversationTurnOut[]
     return <p className="py-8 text-center text-sm text-slate-500">Sin mensajes todavía.</p>;
   }
 
+  let step = 0;
+
   return (
     <div className="space-y-4">
       {turns.map((turn, idx) => {
@@ -31,22 +33,31 @@ export function ConversationTranscript({ turns }: { turns: ConversationTurnOut[]
           );
         }
 
+        step += 1;
         const isClient = turn.role === "cliente";
         return (
-          <div key={idx} className={`flex animate-fade-in items-end gap-2 ${isClient ? "justify-end" : "justify-start"}`}>
+          <div
+            key={idx}
+            className={`flex animate-fade-in items-end gap-2 ${isClient ? "justify-end" : "justify-start"}`}
+          >
             {!isClient && (
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-500/15 text-brand-400">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-hud-500/15 text-hud-400">
                 <Bot size={13} />
               </span>
             )}
-            <div
-              className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                isClient
-                  ? "rounded-br-sm bg-brand-500 text-white"
-                  : "rounded-bl-sm border border-surface-700 bg-surface-800 text-slate-200"
-              }`}
-            >
-              {turn.text}
+            <div className={`flex max-w-[75%] flex-col gap-1 ${isClient ? "items-end" : "items-start"}`}>
+              <span className="px-1 font-mono text-[10px] uppercase tracking-wide text-slate-600">
+                Paso {step} · {isClient ? "Cliente" : "Agente"}
+              </span>
+              <div
+                className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  isClient
+                    ? "rounded-br-sm bg-brand-500 text-white"
+                    : "rounded-bl-sm border border-hud-500/20 bg-surface-800 text-slate-200"
+                }`}
+              >
+                {turn.text}
+              </div>
             </div>
             {isClient && (
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-700 text-slate-400">

@@ -27,6 +27,13 @@ export interface CustomerCreateIn {
   notes?: string | null;
 }
 
+export interface CustomerUpdateIn {
+  name?: string;
+  phone?: string | null;
+  address?: string | null;
+  notes?: string | null;
+}
+
 export interface OrderItemOut {
   product_id: number;
   product_name: string;

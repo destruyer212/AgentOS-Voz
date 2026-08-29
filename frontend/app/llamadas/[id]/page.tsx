@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { ChannelBadge, Pill } from "@/components/Badge";
+import { HudPanel } from "@/components/HudPanel";
 import { LiveRefresher } from "@/components/LiveRefresher";
 import { OrderSummaryCard } from "@/features/agent/OrderSummaryCard";
 import { CallFlowPipeline } from "@/features/conversations/CallFlowPipeline";
@@ -51,7 +52,7 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
         </div>
         {isActive ? (
           <Pill tone="info">
-            <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand-400" />
+            <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-hud-400" />
             En curso — actualizando en vivo
           </Pill>
         ) : (
@@ -64,9 +65,9 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-        <div className="rounded-xl border border-surface-700 bg-surface-900 p-5">
+        <HudPanel className="p-5">
           <ConversationTranscript turns={convo.transcript} />
-        </div>
+        </HudPanel>
 
         <div className="space-y-4">
           <div className="rounded-xl border border-surface-700 bg-surface-900 p-4">

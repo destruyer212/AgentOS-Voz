@@ -1,12 +1,15 @@
 import { CircleDollarSign, ClipboardList, TriangleAlert, Users } from "lucide-react";
 import Link from "next/link";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
-import { PageHeader } from "@/components/PageHeader";
+import { DashboardHero } from "@/components/DashboardHero";
+import { HudPanel } from "@/components/HudPanel";
 import { StatCard } from "@/components/StatCard";
 import { ActivityFeed } from "@/features/audit/ActivityFeed";
 import { RecentOrdersList } from "@/features/orders/RecentOrdersList";
 import { ApiError, api } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+
+const RESTAURANT_NAME = "El Olivar Grill";
 
 export default async function DashboardPage() {
   try {
@@ -22,13 +25,10 @@ export default async function DashboardPage() {
 
     return (
       <div>
-        <PageHeader
-          title="Dashboard"
-          description="Vista general del negocio conectado al agente."
-        />
+        <DashboardHero restaurantName={RESTAURANT_NAME} />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Pedidos" value={String(orders.length)} icon={ClipboardList} accent="brand" />
+          <StatCard label="Pedidos" value={String(orders.length)} icon={ClipboardList} accent="hud" />
           <StatCard label="Ingresos" value={formatCurrency(revenue)} icon={CircleDollarSign} accent="teal" />
           <StatCard label="Clientes" value={String(customers.length)} icon={Users} accent="amber" />
           <StatCard
@@ -44,7 +44,7 @@ export default async function DashboardPage() {
           <div className="lg:col-span-2">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Pedidos recientes</h2>
-              <Link href="/pedidos" className="text-xs font-medium text-brand-400 hover:text-brand-300">
+              <Link href="/pedidos" className="text-xs font-medium text-hud-400 hover:text-hud-300">
                 Ver todos →
               </Link>
             </div>
@@ -54,13 +54,13 @@ export default async function DashboardPage() {
           <div>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Actividad reciente</h2>
-              <Link href="/auditoria" className="text-xs font-medium text-brand-400 hover:text-brand-300">
+              <Link href="/auditoria" className="text-xs font-medium text-hud-400 hover:text-hud-300">
                 Ver todo →
               </Link>
             </div>
-            <div className="rounded-xl border border-surface-700 bg-surface-900 p-4">
+            <HudPanel className="p-4">
               <ActivityFeed logs={logs} />
-            </div>
+            </HudPanel>
           </div>
         </div>
       </div>
@@ -69,7 +69,7 @@ export default async function DashboardPage() {
     const message = err instanceof ApiError ? err.message : "Error desconocido.";
     return (
       <div>
-        <PageHeader title="Dashboard" />
+        <DashboardHero restaurantName={RESTAURANT_NAME} />
         <ApiErrorNotice message={message} />
       </div>
     );
