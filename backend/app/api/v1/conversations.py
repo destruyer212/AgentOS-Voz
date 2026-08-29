@@ -35,6 +35,7 @@ def _to_summary(convo: Conversation) -> ConversationOut:
         id=convo.external_id,
         channel=convo.channel,
         status=convo.status,
+        detail_status=convo.detail_status,
         customer_name=convo.customer.name if convo.customer else None,
         customer_phone=convo.customer.phone if convo.customer else None,
         outcome=convo.outcome,

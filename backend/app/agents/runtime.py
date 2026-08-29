@@ -1028,6 +1028,7 @@ class AgentRuntime:
             convo.transcript = transcript_text
             convo.customer_id = customer_id
             convo.status = db_status
+            convo.detail_status = state.status
             if state.status == "closed":
                 convo.outcome = intent
         else:
@@ -1037,6 +1038,7 @@ class AgentRuntime:
                 customer_id=customer_id,
                 channel=state.channel,
                 status=db_status,
+                detail_status=state.status,
                 transcript=transcript_text,
                 outcome=intent if state.status == "closed" else None,
             )

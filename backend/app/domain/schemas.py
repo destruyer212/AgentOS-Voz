@@ -79,6 +79,7 @@ class ConversationOut(BaseModel):
     id: str
     channel: str
     status: str
+    detail_status: str | None = None
     customer_name: str | None
     customer_phone: str | None
     outcome: str | None

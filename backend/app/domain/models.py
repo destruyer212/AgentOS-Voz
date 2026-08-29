@@ -88,6 +88,12 @@ class Conversation(Base, TenantScopedMixin, TimestampMixin):
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
     channel: Mapped[str] = mapped_column(String(40), default="web")
     status: Mapped[str] = mapped_column(String(40), default="active")
+    # Etapa real del flujo (collecting/need_name/need_fulfillment/
+    # need_address/need_payment/awaiting_confirmation/closed) -- `status` de
+    # arriba solo distingue activo/cerrado para no romper nada que ya lo lea
+    # asi; esto es lo que el frontend usa para el flujo grafico en tiempo
+    # real (ver ConversationState.status en agents/state.py).
+    detail_status: Mapped[str | None] = mapped_column(String(40))
     transcript: Mapped[str] = mapped_column(Text, default="")
     outcome: Mapped[str | None] = mapped_column(String(80))
 
