@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -475,3 +477,49 @@ class ConversationService:
             .where(Conversation.tenant_id == self.tenant_id, Conversation.external_id == external_id)
         )
         return await self.session.scalar(stmt)
+
+
+async def close_stale_web_conversations(session: AsyncSession, *, timeout_minutes: int) -> list[str]:
+    """Cierra conversaciones de canal "web" que quedaron abandonadas -- sin
+    ningun turno nuevo en `timeout_minutes` -- y nunca llegaron a un cierre
+    real del agente (order.confirm, cancelacion, handoff). El chat web no
+    tiene equivalente al auto-hangup de la llamada telefonica, asi que sin
+    esto se quedan en status="active" para siempre e inflan cualquier
+    contador de "llamadas activas" del panel.
+
+    Nunca toca canal "phone": esas ya se cierran solas via el bridge de
+    Telnyx/Deepgram (voice_agent_bridge.py) y forzar un cierre aca podria
+    cortar una llamada real en curso por una condicion de carrera.
+
+    Devuelve los external_id cerrados, para poder loguearlo. Corre sin
+    scope de tenant a proposito -- es un barrido de mantenimiento, no una
+    operacion de un tenant en particular.
+    """
+    # naive UTC a proposito: la columna updated_at se guarda naive (ver
+    # created_at/updated_at en TimestampMixin), no comparable con un
+    # datetime con tzinfo.
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=timeout_minutes)
+    stmt = select(Conversation).where(
+        Conversation.status == "active",
+        Conversation.channel == "web",
+        Conversation.updated_at < cutoff,
+    )
+    stale = list((await session.execute(stmt)).scalars().all())
+    for convo in stale:
+        convo.status = "closed"
+        convo.detail_status = "closed"
+        if not convo.outcome:
+            convo.outcome = "session.timeout"
+        session.add(
+            AuditLog(
+                tenant_id=convo.tenant_id,
+                actor="system",
+                action="conversation.auto_closed",
+                entity_type="Conversation",
+                entity_id=convo.external_id,
+                detail=f"Sin actividad por mas de {timeout_minutes} min, canal={convo.channel}",
+            )
+        )
+    if stale:
+        await session.commit()
+    return [c.external_id for c in stale]

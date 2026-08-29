@@ -55,6 +55,18 @@ class Settings(BaseSettings):
     # del otro. Requiere media_streaming_enabled=true tambien.
     voice_agent_bridge_enabled: bool = False
 
+    # Bug real (ago 2026): conversaciones de canal web abandonadas a mitad
+    # de flujo (el usuario cierra la pestana, o son pruebas manuales via
+    # /agent/turn) se quedaban en status="active" para siempre -- el chat
+    # web no tiene equivalente al hangup de la llamada telefonica. Un
+    # barrido periodico las cierra solo si no tuvieron actividad en
+    # `stale_conversation_timeout_minutes`. Nunca toca canal "phone": esas
+    # ya se cierran solas via el bridge de Telnyx/Deepgram (ver
+    # voice_agent_bridge.py) y forzar un cierre aca podria cortar una
+    # llamada real en curso.
+    stale_conversation_timeout_minutes: int = 20
+    stale_conversation_sweep_interval_seconds: int = 300
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
