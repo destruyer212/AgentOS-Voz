@@ -400,11 +400,17 @@ def _parse_items(text: str) -> list[ParsedItem]:
 def _is_menu_inquiry(lowered: str) -> bool:
     if any(phrase in lowered for phrase in MENU_INQUIRY_PHRASES):
         return True
-    question_starters = ("que ", "cuales ", "cuáles ", "hay ", "tienen ", "tienes ")
+    # Bug real, visto en vivo: "¿Tiene parrilla?" (forma "usted", muy comun
+    # al hablar con un restaurante) no calzaba -- solo estaban cubiertas
+    # "tienen"/"tienes". Sin esto, "parrilla" se trataba como un producto
+    # ambiguo a medio pedir y la respuesta salia rota ("¿Cual ¿Tiene
+    # parrilla? prefieres...").
+    question_starters = ("que ", "cuales ", "cuáles ", "hay ", "tiene ", "tienen ", "tienes ")
     inquiry_terms = (
-        "tienen", "tienes", "hay", "ofrecen", "menu", "menú", "carta", "opciones",
+        "tiene", "tienen", "tienes", "hay", "ofrecen", "menu", "menú", "carta", "opciones",
         "crema", "cremas", "salsa", "salsas", "bebida", "bebidas", "hamburguesa",
-        "hamburguesas", "postre", "postres",
+        "hamburguesas", "postre", "postres", "parrilla", "parrillas", "pollo",
+        "pastas", "chaufa", "chaufas",
     )
     return lowered.startswith(question_starters) and any(term in lowered for term in inquiry_terms)
 

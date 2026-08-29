@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.state import ConversationState, OrderLineDraft, get_or_create
 from app.ai.base import ParsedItem
 from app.ai.router import ai_router
-from app.ai.rule_based import CANCEL_WORDS, is_audio_repair_message
+from app.ai.rule_based import CANCEL_WORDS, CONFIRM_WORDS, is_audio_repair_message
 from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
@@ -227,6 +227,19 @@ def _tokens_overlap(a: str, b: str) -> bool:
     return tokens_partial_match(a, b)
 
 
+def _pending_clarification_question(state: ConversationState) -> str | None:
+    """Reconstruye la pregunta de desambiguacion pendiente ("¿Cuál X
+    prefieres: A, B, C?") a partir de state.pending_clarification, para
+    repetirla tal cual en vez de perderla con una respuesta generica.
+    None si no hay ninguna pendiente o quedo sin opciones utiles."""
+    pending = state.pending_clarification
+    if not pending:
+        return None
+    query = pending.get("query") or "producto"
+    options = ", ".join(option["name"] for option in (pending.get("options") or [])[:4])
+    return f"¿Cuál {query} prefieres: {options}?" if options else None
+
+
 def _resolve_pending_clarification(state: ConversationState, message: str) -> dict | None:
     """Intenta resolver una respuesta elptica a la ultima pregunta de
     desambiguacion de producto (ej. "vegetariana", "Pero te dije
@@ -368,6 +381,24 @@ class AgentRuntime:
         state.used_fallback_this_turn = getattr(parsed, "used_fallback", False)
         parsed.intent = _safety_override_intent(payload.message, awaiting_confirmation, parsed.intent)
 
+        # Bug real, visto en vivo: tras preguntar "Cual gaseosa prefieres:
+        # ...?", el cliente contesto un fragmento cortado por el STT ("Una
+        # de") que el parser no reconocio como pedido -- caia en intent
+        # "smalltalk" (no "order.create"/"order.modify"), asi que el
+        # intento de resolver la aclaracion pendiente de mas abajo NUNCA se
+        # ejecutaba (solo corria para esos dos intents especificos). El
+        # agente respondia un generico "Dime que te provoca pedir hoy?",
+        # perdiendo la pregunta pendiente y el pedido que el cliente venia
+        # armando. Se intenta resolver ANTES de mirar el intent: si
+        # calza, se fuerza a order.modify y sigue el flujo normal.
+        if state.pending_clarification and not parsed.items and parsed.intent not in ("order.create", "order.modify"):
+            resolved = _resolve_pending_clarification(state, payload.message)
+            if resolved:
+                parsed.items = [
+                    ParsedItem(raw_text=payload.message, quantity=1, query=resolved["name"], action="add")
+                ]
+                parsed.intent = "order.modify"
+
         if parsed.intent == "handoff":
             await self._call_tool(
                 tool_calls, "conversation.transfer_to_human",
@@ -404,20 +435,22 @@ class AgentRuntime:
                 if is_audio_repair_message(payload.message):
                     if state.status == "awaiting_confirmation" and state.items:
                         response = "Te escucho. Te repito: " + self._build_summary(state)
-                    elif state.pending_clarification:
-                        query = state.pending_clarification.get("query") or "producto"
-                        options = ", ".join(
-                            option["name"] for option in (state.pending_clarification.get("options") or [])[:4]
-                        )
+                    else:
+                        clarification = _pending_clarification_question(state)
                         response = (
-                            f"Te escucho. ¿Cuál {query} prefieres: {options}?"
-                            if options
+                            f"Te escucho. {clarification}" if clarification
                             else "Te escucho. Repíteme tu pedido, por favor."
                         )
-                    else:
-                        response = "Te escucho. Repíteme tu pedido, por favor."
                 else:
-                    response = "Dime, ¿qué te provoca pedir hoy?"
+                    # Bug real, visto en vivo: tras "Cual gaseosa prefieres:
+                    # ...?", un fragmento cortado ("Una de") que ni siquiera
+                    # el intento de resolucion de arriba pudo calzar caia
+                    # aca y perdia la pregunta pendiente por completo con un
+                    # generico "Dime que te provoca pedir hoy?". Si sigue
+                    # habiendo una aclaracion pendiente, se repite ESA
+                    # pregunta en vez de sonar como que se olvido todo.
+                    clarification = _pending_clarification_question(state)
+                    response = clarification or "Dime, ¿qué te provoca pedir hoy?"
             else:
                 response = (
                     f"Hola, buenas, bienvenido a {settings.restaurant_name}. ¿Qué te provoca pedir hoy?"
@@ -710,6 +743,19 @@ class AgentRuntime:
             state.status = "collecting"
             return await self._finish(
                 state, "Listo, cancelado. ¿Deseas pedir algo más?", "order.cancel", [], tool_calls, None
+            )
+
+        # Bug real, visto en vivo: "Perfecto." solo (una afirmacion generica,
+        # sin contenido) durante la recoleccion de datos no calza ni como
+        # fulfillment ni como pago -- caia al parser de items y se buscaba
+        # como si fuera un producto ("No encontré Perfecto en el menú").
+        # Ninguna de estas preguntas (nombre/entrega/direccion/pago) tiene
+        # una respuesta valida hecha solo de afirmaciones ("si", "dale",
+        # "ok", "perfecto"...), asi que si el mensaje es SOLO eso, mejor
+        # repetir la pregunta que inventar una busqueda sin sentido.
+        if words and words <= CONFIRM_WORDS:
+            return await self._finish(
+                state, f"Perdón, no te entendí bien. {pending_prompt}", "detail.unclear", [], tool_calls, None
             )
 
         # Ruta ultrarrapida y segura: fulfillment/pago son vocabularios

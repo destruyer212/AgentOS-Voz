@@ -892,3 +892,74 @@ async def test_rule_based_parser_ignores_pure_filler_clause():
         "Me da una hamburguesa vegetariana, por favor?", awaiting_confirmation=False
     )
     assert [item.query for item in parsed.items] == ["hamburguesa vegetariana"]
+
+
+@pytest.mark.asyncio
+async def test_rule_based_parser_recognizes_tiene_as_menu_question():
+    # Bug real, visto en vivo: "¿Tiene parrilla?" (forma "usted") no
+    # calzaba como pregunta de menu -- solo "tienen"/"tienes" estaban
+    # cubiertas. "parrilla" se trataba como un producto ambiguo a medio
+    # pedir y la respuesta salia rota ("¿Cual ¿Tiene parrilla? prefieres...").
+    provider = RuleBasedProvider()
+
+    parsed = await provider.parse_message("¿Tiene parrilla?", awaiting_confirmation=False)
+    assert parsed.intent == "menu.inquiry"
+    assert parsed.items == []
+
+
+@pytest.mark.asyncio
+async def test_generic_acknowledgment_during_detail_collection_repeats_question_instead_of_searching():
+    # Bug real, visto en vivo: "Perfecto." solo (sin contenido real) dicho
+    # mientras se pedia el metodo de pago no calzaba como pago valido y
+    # caia al parser de items -- se buscaba como si fuera un producto
+    # ("No encontré Perfecto en el menú"), perdiendo la pregunta pendiente.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Quiero una hamburguesa vegetariana",
+                "Carlos",
+                "delivery",
+                "Calle Falsa 123",
+            ):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Perfecto.", conversation_id=conversation_id)
+            )
+            assert turn.status == "need_payment"
+            assert "no encontr" not in turn.response.lower()
+            assert "efectivo" in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_pending_clarification_survives_a_fragment_that_does_not_resolve_it():
+    # Bug real, visto en vivo: tras "Cual gaseosa prefieres: A, B, C?", un
+    # fragmento cortado por el STT ("Una de") no calzaba con ninguna
+    # opcion Y ademas el parser lo clasificaba como "smalltalk" (no
+    # "order.create"/"order.modify"), asi que el intento de resolver la
+    # aclaracion pendiente ni se ejecutaba -- el agente respondia un
+    # generico "Dime que te provoca pedir hoy?", perdiendo la pregunta
+    # pendiente por completo.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            first = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero una hamburguesa", conversation_id=conversation_id, channel="phone")
+            )
+            assert first.intent == "order.clarify"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.pending_clarification is not None
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Una de", conversation_id=conversation_id, channel="phone")
+            )
+            assert "Cuál hamburguesa" in turn.response or "Cual hamburguesa" in turn.response
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.pending_clarification is not None
+    finally:
+        reset(conversation_id)
