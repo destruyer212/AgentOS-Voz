@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -7,6 +9,7 @@ class ProductOut(BaseModel):
     name: str
     description: str | None
     price: float
+    category: str
     stock_available: int
 
 
@@ -29,7 +32,11 @@ class OrderItemIn(BaseModel):
 
 class OrderCreate(BaseModel):
     customer_id: int | None = None
+    conversation_id: str | None = None
     requested_time: str | None = None
+    fulfillment_type: str | None = None
+    delivery_address: str | None = None
+    payment_method: str | None = None
     items: list[OrderItemIn]
 
 
@@ -45,8 +52,12 @@ class OrderOut(BaseModel):
     id: int
     customer_id: int | None
     customer_name: str | None = None
+    conversation_id: str | None = None
     status: str
     requested_time: str | None
+    fulfillment_type: str | None = None
+    delivery_address: str | None = None
+    payment_method: str | None = None
     total: float
     items: list[OrderItemOut]
 
@@ -56,6 +67,30 @@ class AgentMessageIn(BaseModel):
     conversation_id: str | None = None
     customer_phone: str | None = None
     customer_name: str | None = None
+    channel: str = "web"
+
+
+class ConversationTurnOut(BaseModel):
+    role: str  # cliente | agente | sistema
+    text: str
+
+
+class ConversationOut(BaseModel):
+    id: str
+    channel: str
+    status: str
+    customer_name: str | None
+    customer_phone: str | None
+    outcome: str | None
+    turns: int
+    last_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationDetailOut(ConversationOut):
+    transcript: list[ConversationTurnOut]
+    order: OrderOut | None = None
 
 
 class ToolCallOut(BaseModel):

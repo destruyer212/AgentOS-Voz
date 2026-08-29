@@ -53,7 +53,7 @@ class WorkflowEngine:
                 try:
                     assert step.tool, f"Paso {step.key} de tipo tool sin nombre de tool"
                     result = await self.tools.call(step.tool, arguments)
-                except Exception as exc:  # DomainError u otros fallos de negocio/infra
+                except Exception as exc:  # noqa: BLE001 - traza auditable de fallo de tool
                     trace.append(
                         StepTrace(
                             key=step.key,

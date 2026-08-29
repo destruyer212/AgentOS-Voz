@@ -23,7 +23,7 @@ listas vacías engañosas.
 ## Estructura
 
 ```text
-app/            rutas (dashboard, agente, pedidos, productos, clientes, auditoria)
+app/            rutas (dashboard, agente, llamadas, pedidos, productos, clientes, auditoria)
 components/     UI generica reutilizable (Sidebar, Badge, CodeBlock, Tabs...)
 features/       UI especifica de cada dominio (ChatPanel, OrdersTable...)
 lib/            cliente API, tipos y formateo (moneda, fechas, labels)
@@ -34,7 +34,8 @@ lib/            cliente API, tipos y formateo (moneda, fechas, labels)
 | Ruta | Que muestra |
 |---|---|
 | `/` | Dashboard: KPIs, pedidos recientes, actividad reciente |
-| `/agente` | Chat en vivo contra `/api/v1/agent/turn` — reemplaza la llamada de voz hasta que exista Sprint 6/7 |
+| `/agente` | Chat en vivo contra `/api/v1/agent/turn` para probar el runtime sin llamar por telefono |
+| `/llamadas` | Conversaciones y llamadas en vivo, con transcript y detalle del pedido asociado |
 | `/pedidos` | Lista de pedidos con items, estado y total |
 | `/productos` | Catalogo con stock, con busqueda difusa (la misma que usa el agente) |
 | `/clientes` | Lista + alta manual de clientes |

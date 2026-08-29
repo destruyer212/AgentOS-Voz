@@ -7,13 +7,13 @@ de fulfillment -> orden creada con stock descontado).
 
 ## Modulos
 
-- `api`: rutas HTTP y dependencias (`v1/products`, `v1/customers`, `v1/orders`, `v1/agent`, `v1/system`, `v1/telephony`).
+- `api`: rutas HTTP y dependencias (`v1/products`, `v1/customers`, `v1/orders`, `v1/agent`, `v1/conversations`, `v1/system`, `v1/telephony`, `v1/telephony/telnyx`).
 - `agents`: runtime conversacional (`runtime.py`), memoria de conversacion en curso (`state.py`).
 - `ai`: interfaz `LLMProvider` (`base.py`), proveedor `rule_based` (NLU en espanol sin costo, `rule_based.py`) y el router que selecciona proveedor segun `LLM_PROVIDER` (`router.py`).
 - `workflows`: motor minimo de pasos tool/condition/end (`engine.py`) y la definicion `restaurant_order_fulfillment` (`definitions.py`).
 - `domain`: modelos SQLAlchemy, schemas Pydantic y servicios de negocio (stock, precios, pedidos).
 - `tools`: unica puerta de entrada del agente al negocio (`registry.py`).
-- `integrations`: notificaciones (simulada, deja rastro en `audit_logs`).
+- `integrations`: notificaciones (simulada, deja rastro en `audit_logs`), cliente Telnyx y bridge Deepgram Voice Agent.
 - `infrastructure`: config, sesion async de DB y seed de datos demo.
 
 ## Regla
@@ -34,7 +34,7 @@ python -m venv .venv
 ```
 
 Con SQLite por defecto (`DATABASE_URL` en `.env`), sin instalar Postgres. Al
-arrancar corre el seed automatico: tenant demo + 7 productos + 1 cliente.
+arrancar corre el seed automatico: tenant demo + menu demo + 1 cliente.
 Docs interactivas en `http://127.0.0.1:8000/docs`.
 
 ### Proveedor de IA
@@ -46,8 +46,26 @@ Docs interactivas en `http://127.0.0.1:8000/docs`.
   llamada a Gemini falla por cualquier motivo, el propio proveedor cae
   automaticamente a `rule_based` para ese turno — la conversacion no se rompe.
 
-`backend/.env` (con la clave real) esta en `.gitignore` y nunca se sube al repo;
-`.env.example` solo trae el nombre de la variable, vacio.
+Con `GEMINI_FAST_PATH_ENABLED=true` (default), el proveedor Gemini intenta
+primero el parser local para frases obvias (`confirmo`, `delivery`, `quiero
+una Inca Kola`). Si se entiende con seguridad, evita la llamada de red a Gemini
+y responde mucho mas rapido; si no, usa Gemini normalmente.
+
+`backend/.env` (con claves reales) esta en `.gitignore` y nunca se sube al repo;
+`.env.example` trae las variables esperadas, vacias o apagadas por default.
+
+### Voice Engine V2 (Telnyx Media Streaming + Deepgram)
+
+El camino nuevo de voz se activa solo con:
+
+```bash
+MEDIA_STREAMING_ENABLED=true
+VOICE_AGENT_BRIDGE_ENABLED=true
+PUBLIC_BASE_URL=https://<tu-url-publica>
+DEEPGRAM_API_KEY=<tu-api-key>
+```
+
+Si falta `PUBLIC_BASE_URL` o `DEEPGRAM_API_KEY`, el backend deja el bridge apagado de facto y usa Call Control como respaldo para no dejar una llamada real sin agente.
 
 ## Probar el caso restaurante
 

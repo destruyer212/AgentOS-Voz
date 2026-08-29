@@ -2,13 +2,38 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.models import AuditLog, Customer, InventoryItem, Order, OrderItem, Product
+from app.domain.models import (
+    AuditLog,
+    Conversation,
+    Customer,
+    InventoryItem,
+    Order,
+    OrderItem,
+    Product,
+)
 from app.domain.schemas import CustomerCreate, OrderCreate, OrderItemOut, OrderOut, ProductOut
-from app.domain.text_utils import tokenize
+from app.domain.text_utils import tokenize, tokens_partial_match
+
+_PRODUCT_QUERY_ALIASES = {
+    "inca cola": "inca kola",
+    "inka cola": "inca kola",
+    "inka kola": "inca kola",
+    "indo cola": "inca kola",
+    "indo kola": "inca kola",
+    "indocola": "inca kola",
+    "indokola": "inca kola",
+}
 
 
 class DomainError(Exception):
     pass
+
+
+def _canonical_product_query(query: str) -> str:
+    normalized = " ".join(tokenize(query))
+    if normalized in _PRODUCT_QUERY_ALIASES:
+        return _PRODUCT_QUERY_ALIASES[normalized]
+    return query
 
 
 class ProductService:
@@ -33,14 +58,19 @@ class ProductService:
             name=product.name,
             description=product.description,
             price=product.price,
+            category=product.category,
             stock_available=max(inventory.quantity - inventory.reserved, 0),
         )
 
-    async def search(self, query: str, limit: int = 5) -> list[ProductOut]:
+    async def search_scored(self, query: str, limit: int = 5) -> list[tuple[float, ProductOut]]:
         """Matching difuso en Python (no SQL LIKE): tolera plurales y orden
         de palabras distinto ("hamburguesas dobles" -> "Hamburguesa Doble"),
-        clave para que el NLU basado en reglas encuentre productos reales."""
-        query_tokens = tokenize(query)
+        clave para que el NLU basado en reglas encuentre productos reales.
+        Devuelve el score junto al producto para que quien llama pueda
+        detectar empates (termino generico como "hamburguesa" que calza
+        igual de bien con varias variantes) y pedir aclaracion en vez de
+        adivinar cual quiso decir el cliente."""
+        query_tokens = tokenize(_canonical_product_query(query))
         if not query_tokens:
             return []
 
@@ -51,18 +81,30 @@ class ProductService:
             for qt in query_tokens:
                 if qt in name_tokens:
                     token_score += 1.0  # match exacto de palabra completa
-                elif any(qt in nt or nt in qt for nt in name_tokens):
-                    token_score += 0.6  # match parcial (substring)
+                elif any(tokens_partial_match(qt, nt) for nt in name_tokens):
+                    # match parcial (prefijo/sufijo, no substring a mitad de
+                    # palabra -- ver tokens_partial_match) -- el minimo de 3
+                    # caracteres es a proposito: un fragmento de 1-2 letras
+                    # (ej. "C" de una transcripcion cortada) es prefijo de
+                    # CASI cualquier palabra y generaba coincidencias sin
+                    # sentido. Visto en vivo en una llamada real: "C"
+                    # matcheo contra 4 productos no relacionados entre si.
+                    token_score += 0.6
             if token_score == 0:
                 continue
-            score = token_score / len(query_tokens)
+            score = round(token_score / len(query_tokens), 4)
             scored.append((score, product, inventory))
 
         scored.sort(key=lambda row: (-row[0], row[1].name))
-        return [self._to_out(product, inventory) for _, product, inventory in scored[:limit]]
+        return [(score, self._to_out(product, inventory)) for score, product, inventory in scored[:limit]]
 
-    async def list_all(self) -> list[ProductOut]:
+    async def search(self, query: str, limit: int = 5) -> list[ProductOut]:
+        return [out for _, out in await self.search_scored(query, limit)]
+
+    async def list_all(self, category: str | None = None) -> list[ProductOut]:
         rows = sorted(await self._active_with_inventory(), key=lambda row: row[0].name)
+        if category:
+            rows = [row for row in rows if row[0].category == category]
         return [self._to_out(product, inventory) for product, inventory in rows]
 
 
@@ -100,6 +142,16 @@ class CustomerService:
             stmt = stmt.where(or_(Customer.name.ilike(like), Customer.phone.ilike(like)))
         stmt = stmt.order_by(Customer.id.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars().all())
+
+    async def update_name(self, customer_id: int, name: str) -> None:
+        customer = await self.session.get(Customer, customer_id)
+        if customer and customer.tenant_id == self.tenant_id:
+            customer.name = name
+
+    async def update_address(self, customer_id: int, address: str) -> None:
+        customer = await self.session.get(Customer, customer_id)
+        if customer and customer.tenant_id == self.tenant_id:
+            customer.address = address
 
     async def _audit(self, action: str, entity_type: str, entity_id: str, detail: str) -> None:
         self.session.add(
@@ -141,6 +193,18 @@ class OrderService:
         ).scalars().all()
         inventory_by_product = {item.product_id: item for item in inventory_rows}
 
+        # Si el mismo producto aparece en mas de un item del pedido (ej. dos
+        # lineas separadas de "Coca-Cola" en vez de una con quantity=2), hay
+        # que sumar lo pedido de ESE producto antes de comparar contra stock:
+        # chequear cada linea por separado contra el mismo `inventory.quantity`
+        # sin descontar deja pasar la validacion de las dos aunque juntas
+        # superen el disponible (el UPDATE atomico de abajo lo termina
+        # bloqueando igual, pero con un mensaje enganoso de "se agoto justo
+        # antes de confirmar" en vez de avisar stock insuficiente de una).
+        requested_by_product: dict[int, int] = {}
+        for item in data.items:
+            requested_by_product[item.product_id] = requested_by_product.get(item.product_id, 0) + item.quantity
+
         total = 0.0
         for item in data.items:
             product = product_by_id.get(item.product_id)
@@ -148,15 +212,19 @@ class OrderService:
             if not product or not inventory:
                 raise DomainError(f"Producto no disponible: {item.product_id}")
             available = inventory.quantity - inventory.reserved
-            if available < item.quantity:
+            if available < requested_by_product[item.product_id]:
                 raise DomainError(f"Stock insuficiente para {product.name}. Disponible: {available}")
             total += product.price * item.quantity
 
         order = Order(
             tenant_id=self.tenant_id,
             customer_id=data.customer_id,
+            conversation_id=data.conversation_id,
             status="confirmed",
             requested_time=data.requested_time,
+            fulfillment_type=data.fulfillment_type,
+            delivery_address=data.delivery_address,
+            payment_method=data.payment_method,
             total=round(total, 2),
             source="agent",
         )
@@ -260,14 +328,30 @@ class OrderService:
         ).scalars().all()
         return [self._to_out(order) for order in orders]
 
+    async def get_by_conversation(self, conversation_id: str) -> OrderOut | None:
+        order = await self.session.scalar(
+            select(Order)
+            .options(
+                selectinload(Order.items).selectinload(OrderItem.product),
+                selectinload(Order.customer),
+            )
+            .where(Order.tenant_id == self.tenant_id, Order.conversation_id == conversation_id)
+            .order_by(Order.id.desc())
+        )
+        return self._to_out(order) if order else None
+
     @staticmethod
     def _to_out(order: Order) -> OrderOut:
         return OrderOut(
             id=order.id,
             customer_id=order.customer_id,
             customer_name=order.customer.name if order.customer else None,
+            conversation_id=order.conversation_id,
             status=order.status,
             requested_time=order.requested_time,
+            fulfillment_type=order.fulfillment_type,
+            delivery_address=order.delivery_address,
+            payment_method=order.payment_method,
             total=order.total,
             items=[
                 OrderItemOut(
@@ -280,3 +364,27 @@ class OrderService:
                 for item in order.items
             ],
         )
+
+
+class ConversationService:
+    def __init__(self, session: AsyncSession, tenant_id: str):
+        self.session = session
+        self.tenant_id = tenant_id
+
+    async def list_recent(self, limit: int = 50) -> list[Conversation]:
+        stmt = (
+            select(Conversation)
+            .options(selectinload(Conversation.customer))
+            .where(Conversation.tenant_id == self.tenant_id)
+            .order_by(Conversation.updated_at.desc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def get_by_external_id(self, external_id: str) -> Conversation | None:
+        stmt = (
+            select(Conversation)
+            .options(selectinload(Conversation.customer))
+            .where(Conversation.tenant_id == self.tenant_id, Conversation.external_id == external_id)
+        )
+        return await self.session.scalar(stmt)

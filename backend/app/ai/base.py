@@ -18,6 +18,17 @@ class ParsedItem:
     quantity: int
     query: str
     notes: str | None = None
+    # add: agregar al pedido (default) | remove: sacar el producto por completo
+    # increase/decrease: sumar/restar `quantity` a un item que ya esta en el
+    # pedido (ej. "aumenta las papas", "una hamburguesa menos").
+    # set: dejar el item existente en `quantity` unidades (ej. "pon las papas a dos").
+    action: str = "add"
+
+
+@dataclass
+class ParsedDetailAnswer:
+    answers_pending_question: bool = False
+    value: str | None = None
 
 
 @dataclass
@@ -27,9 +38,16 @@ class ParsedMessage:
     requested_time: str | None = None
     wants_human: bool = False
     confirms: bool | None = None
+    detail_answer: ParsedDetailAnswer = field(default_factory=ParsedDetailAnswer)
 
 
 class LLMProvider(Protocol):
     name: str
 
-    async def parse_message(self, message: str, *, awaiting_confirmation: bool) -> ParsedMessage: ...
+    async def parse_message(
+        self,
+        message: str,
+        *,
+        awaiting_confirmation: bool,
+        pending_detail: str | None = None,
+    ) -> ParsedMessage: ...

@@ -4,6 +4,8 @@ import type {
   AgentMessageIn,
   AgentTurnOut,
   AuditLogEntry,
+  ConversationDetailOut,
+  ConversationOut,
   CustomerCreateIn,
   CustomerOut,
   OrderOut,
@@ -76,6 +78,10 @@ export const api = {
   agent: {
     turn: (payload: AgentMessageIn) =>
       request<AgentTurnOut>("/agent/turn", { method: "POST", body: JSON.stringify(payload) }),
+  },
+  conversations: {
+    list: (limit = 50) => request<ConversationOut[]>(`/conversations${qs({ limit })}`),
+    get: (id: string) => request<ConversationDetailOut>(`/conversations/${encodeURIComponent(id)}`),
   },
   system: {
     auditLogs: (limit = 50) => request<AuditLogEntry[]>(`/system/audit-logs${qs({ limit })}`),

@@ -18,9 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # noqa: E402
+import httpx
 
-from app.infrastructure.config import settings  # noqa: E402
+from app.infrastructure.config import settings
 
 BASE_URL = "https://api.telnyx.com/v2"
 APP_NAME = "AgentOS Voz"

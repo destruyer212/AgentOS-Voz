@@ -31,6 +31,7 @@ class Product(Base, TenantScopedMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(160), index=True)
     description: Mapped[str | None] = mapped_column(Text)
     price: Mapped[float] = mapped_column(Float)
+    category: Mapped[str] = mapped_column(String(40), default="general", index=True)
     active: Mapped[bool] = mapped_column(default=True)
 
 
@@ -51,10 +52,14 @@ class Order(Base, TenantScopedMixin, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
+    conversation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(40), default="draft")
     requested_time: Mapped[str | None] = mapped_column(String(40))
     total: Mapped[float] = mapped_column(Float, default=0)
     source: Mapped[str] = mapped_column(String(40), default="agent")
+    fulfillment_type: Mapped[str | None] = mapped_column(String(20))  # delivery | pickup
+    delivery_address: Mapped[str | None] = mapped_column(String(240))
+    payment_method: Mapped[str | None] = mapped_column(String(20))  # efectivo | yape | plin | tarjeta
 
     customer: Mapped[Customer | None] = relationship()
     items: Mapped[list["OrderItem"]] = relationship(cascade="all, delete-orphan")
@@ -86,6 +91,8 @@ class Conversation(Base, TenantScopedMixin, TimestampMixin):
     transcript: Mapped[str] = mapped_column(Text, default="")
     outcome: Mapped[str | None] = mapped_column(String(80))
 
+    customer: Mapped[Customer | None] = relationship()
+
 
 class WorkflowRun(Base, TenantScopedMixin, TimestampMixin):
     __tablename__ = "workflow_runs"
@@ -106,3 +113,24 @@ class AuditLog(Base, TenantScopedMixin, TimestampMixin):
     entity_type: Mapped[str] = mapped_column(String(80))
     entity_id: Mapped[str] = mapped_column(String(80))
     detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class VoiceTurnMetric(Base, TenantScopedMixin, TimestampMixin):
+    """Observabilidad basica: cuanto tarda AgentRuntime en procesar CADA
+    turno, sea chat web o llamada telefonica (via agent_llm_proxy en el
+    Voice Agent bridge, o el flujo viejo de Call Control -- ambos pasan por
+    AgentRuntime.handle_turn, que es donde se mide). No mide STT/TTS (eso lo
+    corre Deepgram fuera de nuestro proceso, sin visibilidad nuestra) --
+    mide el tramo que SI controlamos: el "pensar" (nuestra logica + la
+    llamada a Gemini cuando aplica). Es la pieza que hoy realmente podiamos
+    instrumentar sin agregar infraestructura nueva."""
+
+    __tablename__ = "voice_turn_metrics"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    conversation_id: Mapped[str] = mapped_column(String(120), index=True)
+    channel: Mapped[str] = mapped_column(String(20))
+    intent: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40))
+    think_ms: Mapped[int] = mapped_column(Integer)
+    used_fallback: Mapped[bool] = mapped_column(default=False)

@@ -1,6 +1,6 @@
 """Runtime del agente conversacional. Orquesta: intent (AI Router) ->
-normalizacion de productos (tools) -> confirmacion -> workflow de
-fulfillment (workflow engine -> tools -> domain -> DB).
+normalizacion de productos (tools) -> datos de entrega/pago -> confirmacion
+-> workflow de fulfillment (workflow engine -> tools -> domain -> DB).
 
 El agente nunca toca el dominio directamente; todo pasa por
 `app.tools.registry.ToolRegistry`.
@@ -9,7 +9,11 @@ El agente nunca toca el dominio directamente; todo pasa por
 from __future__ import annotations
 
 import json
+import logging
+import re
+import time
 from dataclasses import asdict
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,15 +21,227 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.state import ConversationState, OrderLineDraft, get_or_create
 from app.ai.base import ParsedItem
 from app.ai.router import ai_router
-from app.ai.rule_based import CANCEL_WORDS
-from app.domain.models import Conversation, WorkflowRun
+from app.ai.rule_based import CANCEL_WORDS, is_audio_repair_message
+from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
-from app.domain.text_utils import normalize_text
+from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
 from app.workflows.engine import WorkflowEngine
 from app.workflows.models import WorkflowRunResult
+
+# Sub-estados de recoleccion de datos de entrega, en el orden en que se piden.
+logger = logging.getLogger(__name__)
+
+_DETAIL_STATUSES = ("need_name", "need_fulfillment", "need_address", "need_payment")
+
+_DETAIL_PROMPTS = {
+    "name": "Para el pedido, ¿a nombre de quién lo dejo?",
+    "fulfillment": "¿Lo recoges tú en el local o te lo llevamos por delivery?",
+    "address": "¿Cuál es la dirección de entrega?",
+    "payment": "¿Pagas en efectivo, Yape o tarjeta?",
+}
+
+# Categorias del menu y palabras que el cliente usa para referirse a ellas,
+# para responder preguntas tipo "¿hay algo para tomar?" con las opciones
+# reales de esa categoria en vez de un "no encontre" generico.
+_MENU_CATEGORY_KEYWORDS = {
+    "bebida": ["bebida", "bebidas", "tomar", "beber", "gaseosa", "gaseosas", "jugo", "refresco", "tragos"],
+    "hamburguesa": ["hamburguesa", "hamburguesas"],
+    "acompanamiento": ["papas", "acompañamiento", "acompanamiento", "acompañamientos", "piqueo", "entrada", "entradas"],
+    "postre": ["postre", "postres", "dulce", "dulces"],
+}
+
+_MODIFIER_OPTIONS = {
+    "cremas": ["ají", "mayonesa", "ketchup", "tártara", "huancaína"],
+    "acompanamientos": ["papas fritas", "ensalada"],
+}
+
+
+def _format_money_for_voice(amount: float) -> str:
+    value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    soles = int(value)
+    cents = int((value - Decimal(soles)) * 100)
+
+    if soles <= 0 and cents:
+        cent_unit = "céntimo" if cents == 1 else "céntimos"
+        return f"{cents} {cent_unit}"
+
+    sol_unit = "sol" if soles == 1 else "soles"
+    if cents == 0:
+        return f"{soles} {sol_unit}"
+
+    cent_unit = "céntimo" if cents == 1 else "céntimos"
+    return f"{soles} {sol_unit} con {cents} {cent_unit}"
+
+
+_NAME_PREFIX_RE = re.compile(
+    r"^(mi\s+nombre\s+es|me\s+llamo|soy|es|de\s+parte\s+de|a\s+nombre\s+de)\s+",
+    re.IGNORECASE,
+)
+
+
+def _extract_name(raw: str) -> str:
+    """El cliente rara vez dice solo el nombre suelto: suele decir "me llamo
+    Carlos" o "soy Carlos". Se limpia la frase para quedarnos solo con el
+    nombre, sin volver a preguntar por algo que ya se dijo."""
+    cleaned = raw.strip(" .")
+    cleaned = _NAME_PREFIX_RE.sub("", cleaned).strip(" .")
+    return cleaned or raw.strip(" .")
+
+
+_ADDRESS_PREFIX_RE = re.compile(
+    r"^(mi\s+direcci[oó]n\s+es|vivo\s+en|es\s+en|en)\s+",
+    re.IGNORECASE,
+)
+
+
+def _extract_address(raw: str) -> str:
+    original = raw.strip(" .")
+    cleaned = _ADDRESS_PREFIX_RE.sub("", original).strip(" .")
+    return cleaned or original
+
+
+def _match_fulfillment(lowered: str) -> str | None:
+    if any(k in lowered for k in ("delivery", "envio", "envío", "domicilio", "llevar", "llevas")):
+        return "delivery"
+    if any(k in lowered for k in ("recog", "recojo", "pasar", "tienda", "local", "voy yo", "paso yo")):
+        return "pickup"
+    return None
+
+
+def _match_payment(lowered: str) -> str | None:
+    if "yape" in lowered:
+        return "yape"
+    if "plin" in lowered:
+        return "plin"
+    if any(k in lowered for k in ("efectivo", "cash", "contado")):
+        return "efectivo"
+    if "tarjeta" in lowered:
+        return "tarjeta"
+    return None
+
+
+_DETAIL_LITERAL_BLOCKLIST = (
+    "quiero", "quisiera", "dame", "deme", "falta", "agrega", "agregar", "aumenta",
+    "quita", "quitar", "cambia", "cambiar", "menu", "menú", "bebida", "bebidas",
+    "hamburguesa", "hamburguesas", "papas", "postre", "postres", "precio", "cuanto",
+    "hola", "buenas", "gracias", "ok", "okay",
+)
+
+
+def _safe_literal_detail(current: str, message: str, lowered: str) -> str | None:
+    """Atajo sin LLM solo para respuestas claramente literales. La regla es
+    deliberadamente conservadora: ante duda, el runtime pasa por NLU y no
+    guarda texto libre como nombre/direccion."""
+    if any(word in lowered for word in _DETAIL_LITERAL_BLOCKLIST):
+        return None
+
+    if current == "need_name":
+        cleaned = _extract_name(message)
+        tokens = cleaned.split()
+        if 1 <= len(tokens) <= 4 and not re.search(r"\d", cleaned):
+            return cleaned
+        return None
+
+    if current == "need_address":
+        cleaned = _extract_address(message)
+        address_markers = (
+            "av", "avenida", "jr", "jirón", "jiron", "calle", "pasaje", "mz",
+            "manzana", "lote", "departamento", "dpto", "numero", "número",
+        )
+        has_marker = any(marker in lowered for marker in address_markers)
+        # Un numero (de casa/jiron) ya es una direccion util por si solo. Pero
+        # un marcador SOLO ("Calle", sin nombre) no alcanza -- visto en vivo:
+        # el que llama dice "Calle" y hace una pausa antes de dar el nombre
+        # real (el STT lo entrega como dos turnos separados), y capturar
+        # "Calle" ya como la direccion completa deja el pedido con una
+        # direccion inutil. Con un marcador exigimos al menos una palabra
+        # mas; sin marcador ni numero, mejor pasar por NLU que adivinar.
+        if re.search(r"\d", cleaned):
+            return cleaned
+        if has_marker and len(cleaned.split()) >= 2:
+            return cleaned
+        return None
+
+    return None
+
+
+def _tokens_overlap(a: str, b: str) -> bool:
+    """Igual/parecido tras normalizar -- match exacto, o prefijo/sufijo con
+    minimo de 3 caracteres (mismo criterio que ProductService.search_scored
+    -- ver tokens_partial_match -- para que "bebid" -- lo que queda de
+    "bebidita" tras sacarle el diminutivo -- siga calzando contra la
+    palabra clave "bebida" sin que un match a mitad de palabra genere falsos
+    positivos como "cola" adentro de "chocolate")."""
+    return tokens_partial_match(a, b)
+
+
+def _resolve_pending_clarification(state: ConversationState, message: str) -> dict | None:
+    """Intenta resolver una respuesta elptica a la ultima pregunta de
+    desambiguacion de producto (ej. "vegetariana", "Pero te dije
+    vegetariana.") contra las opciones que se ofrecieron. Solo resuelve si
+    el mensaje calza con UNA sola opcion por una palabra que no sea comun a
+    todas (si calzara por "hamburguesa", que esta en las 4 opciones, seria
+    tan ambiguo como antes de preguntar)."""
+    pending = state.pending_clarification
+    if not pending:
+        return None
+    candidates = pending.get("options") or []
+    if not candidates:
+        return None
+    message_tokens = tokenize(message)
+    if not message_tokens:
+        return None
+    all_token_sets = [set(tokenize(c["name"])) for c in candidates]
+    common_tokens = set.intersection(*all_token_sets) if len(all_token_sets) > 1 else set()
+    matches = []
+    for candidate, candidate_tokens in zip(candidates, all_token_sets):
+        distinctive = candidate_tokens - common_tokens
+        if any(_tokens_overlap(mt, ct) for mt in message_tokens for ct in distinctive):
+            matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _item_answers_pending_clarification(
+    pending: dict, resolved: dict, item: ParsedItem
+) -> bool:
+    candidates = pending.get("options") or []
+    item_tokens = set(tokenize(item.query))
+    if not candidates or not item_tokens:
+        return False
+
+    all_token_sets = [set(tokenize(candidate["name"])) for candidate in candidates]
+    common_tokens = set.intersection(*all_token_sets) if len(all_token_sets) > 1 else set()
+    resolved_tokens = set(tokenize(resolved["name"]))
+    distinctive_tokens = resolved_tokens - common_tokens
+    return bool(item_tokens & distinctive_tokens) or item_tokens <= resolved_tokens
+
+
+def _detect_menu_category(message: str) -> str | None:
+    # tokenize() (no substring crudo sobre el texto completo): normaliza
+    # plurales Y diminutivos ("hamburguesita"/"bebidita"). Con el substring
+    # crudo de antes, esas formas no calzaban contra la palabra clave
+    # ("hamburguesa"/"bebida") y la pregunta se respondia con el menu
+    # completo en vez de solo la categoria pedida -- bug real, visto en vivo.
+    message_tokens = tokenize(message)
+    for category, keywords in _MENU_CATEGORY_KEYWORDS.items():
+        keyword_tokens = {token for kw in keywords for token in tokenize(kw)}
+        if any(_tokens_overlap(mt, kt) for mt in message_tokens for kt in keyword_tokens):
+            return category
+    return None
+
+
+def _detect_modifier_inquiry(message: str) -> str | None:
+    message_tokens = tokenize(message)
+    if any(_tokens_overlap(mt, kt) for mt in message_tokens for kt in ("crema", "salsa", "aji")):
+        return "cremas"
+    if any(_tokens_overlap(mt, kt) for mt in message_tokens for kt in ("ensalada", "acompanamiento", "guarnicion")):
+        return "acompanamientos"
+    return None
 
 
 def _safety_override_intent(message: str, awaiting_confirmation: bool, intent: str) -> str:
@@ -46,6 +262,25 @@ def _safety_override_intent(message: str, awaiting_confirmation: bool, intent: s
     return intent
 
 
+def _transcript_line(role: str, text: str) -> str:
+    """El transcript persistido se parsea despues linea por linea ("cliente:
+    ..." / "agente: ..."), asi que un salto de linea suelto dentro del texto
+    (una respuesta larga de Gemini con formato, por ejemplo) rompería esa
+    invariante y el turno se veria cortado en pedazos falsos en el frontend."""
+    return f"{role}: {text.replace(chr(10), ' ').strip()}"
+
+
+def _reset_order_draft(state: ConversationState) -> None:
+    state.items.clear()
+    state.unresolved.clear()
+    state.requested_time = None
+    state.fulfillment_type = None
+    state.delivery_address = None
+    state.payment_method = None
+    state.silence_retries = 0
+    state.pending_clarification = None
+
+
 class AgentRuntime:
     def __init__(self, session: AsyncSession, tenant_id: str):
         self.session = session
@@ -54,17 +289,34 @@ class AgentRuntime:
 
     async def handle_turn(self, payload: AgentMessageIn) -> AgentTurnOut:
         state = get_or_create(payload.conversation_id, self.tenant_id)
-        state.transcript.append(f"cliente: {payload.message}")
+        # Observabilidad (VoiceTurnMetric): arranca el cronometro de ESTE
+        # turno. Se resetea used_fallback_this_turn aca tambien -- si no,
+        # un fallback de un turno anterior quedaria marcado en el turno
+        # actual aunque este no haya necesitado caer a rule_based.
+        state.turn_started_at = time.monotonic()
+        state.used_fallback_this_turn = False
+        if state.status == "closed":
+            _reset_order_draft(state)
+            state.status = "collecting"
+        state.channel = payload.channel
+        state.transcript.append(_transcript_line("cliente", payload.message))
 
         if payload.customer_phone or payload.customer_name:
             await self._resolve_customer(state, payload)
 
+        tool_calls: list[ToolCallOut] = []
+
+        # Sub-estados de recoleccion de datos (nombre/entrega/pago): no pasan
+        # por el NLU de pedidos, se interpretan directo como respuesta a la
+        # pregunta puntual que se hizo en el turno anterior.
+        if state.status in _DETAIL_STATUSES:
+            return await self._handle_detail_answer(state, payload.message, tool_calls)
+
         provider = ai_router.get_provider()
         awaiting_confirmation = state.status == "awaiting_confirmation"
         parsed = await provider.parse_message(payload.message, awaiting_confirmation=awaiting_confirmation)
+        state.used_fallback_this_turn = getattr(parsed, "used_fallback", False)
         parsed.intent = _safety_override_intent(payload.message, awaiting_confirmation, parsed.intent)
-
-        tool_calls: list[ToolCallOut] = []
 
         if parsed.intent == "handoff":
             await self._call_tool(
@@ -73,61 +325,132 @@ class AgentRuntime:
             )
             state.status = "closed"
             return await self._finish(
-                state, "Entiendo, te transfiero con un asesor humano en un momento.", "handoff", [], tool_calls, None
+                state, "Claro, te paso con alguien del equipo. Un momento.", "handoff", [], tool_calls, None
             )
+
+        if parsed.intent == "menu.inquiry":
+            return await self._handle_menu_inquiry(state, payload.message, tool_calls)
 
         if parsed.intent == "smalltalk":
-            return await self._finish(
-                state,
-                "Hola, soy el asistente del restaurante. Cuentame que te gustaria pedir.",
-                "smalltalk", [], tool_calls, None,
-            )
+            # El saludo completo ("Hola, buenas...") solo tiene sentido en el
+            # primer turno de la conversacion. Bug real, visto en vivo: una
+            # frase mal entendida a mitad de un pedido (ej. "Una vez estaria
+            # bien.", una transcripcion garbled) caia en "smalltalk" y
+            # respondia el saludo de bienvenida de nuevo -- el pedido seguia
+            # intacto (state.items no se toca aca), pero sonaba como si el
+            # agente hubiera olvidado todo y reiniciado la llamada. Con algo
+            # de progreso ya hecho, es mejor pedir que repita.
+            #
+            # En telefono el saludo YA lo dijo Deepgram directamente (campo
+            # "greeting" del Settings, ver voice_agent_bridge.py) sin pasar
+            # nunca por este runtime -- para nosotros, el primer turno real
+            # de una llamada es el primer mensaje que SI llega aca, y suele
+            # ser un "¿Aló?" que cae en smalltalk. Repetir el saludo completo
+            # ahi sonaba, en vivo, como si el saludo se hubiera cortado y el
+            # agente hubiera vuelto a saludar desde cero. Por eso en telefono
+            # nunca repetimos el saludo completo, solo en canales donde
+            # nosotros somos quienes saludan primero (web/whatsapp).
+            if state.channel == "phone":
+                if is_audio_repair_message(payload.message):
+                    if state.status == "awaiting_confirmation" and state.items:
+                        response = "Te escucho. Te repito: " + self._build_summary(state)
+                    elif state.pending_clarification:
+                        query = state.pending_clarification.get("query") or "producto"
+                        options = ", ".join(
+                            option["name"] for option in (state.pending_clarification.get("options") or [])[:4]
+                        )
+                        response = (
+                            f"Te escucho. ¿Cuál {query} prefieres: {options}?"
+                            if options
+                            else "Te escucho. Repíteme tu pedido, por favor."
+                        )
+                    else:
+                        response = "Te escucho. Repíteme tu pedido, por favor."
+                else:
+                    response = "Dime, ¿qué te provoca pedir hoy?"
+            else:
+                response = (
+                    "Hola, buenas. ¿Qué te provoca pedir hoy?"
+                    if not state.items and not state.transcript[:-1]
+                    else "Perdón, no te entendí bien. ¿Me lo repites?"
+                )
+            return await self._finish(state, response, "smalltalk", [], tool_calls, None)
 
         if parsed.intent in ("order.create", "order.modify"):
-            missing = await self._normalize_items(state, parsed.items, tool_calls)
+            # Bug real, visto en vivo: tras preguntar "Cual hamburguesa
+            # prefieres: BBQ, Clasica, Doble, Vegetariana?", el cliente
+            # respondio "Pero te dije vegetariana." -- el parser (rule_based
+            # o Gemini) no reconoce eso como un pedido (no tiene "quiero"/
+            # "una X", es una queja), asi que parsed.items salia vacio y el
+            # agente contestaba "No te entendi bien" IGNORANDO que habia una
+            # pregunta de desambiguacion pendiente -- perdia el progreso del
+            # pedido y sonaba como si no hubiera escuchado nada. Si el
+            # parser no saco ningun item pero hay una desambiguacion
+            # pendiente, intentamos resolverla nosotros contra el mensaje
+            # crudo antes de rendirnos.
+            if state.pending_clarification:
+                resolved = _resolve_pending_clarification(state, payload.message)
+                if resolved:
+                    parsed.items = [
+                        ParsedItem(raw_text=payload.message, quantity=1, query=resolved["name"], action="add"),
+                        *[
+                            item
+                            for item in parsed.items
+                            if not _item_answers_pending_clarification(
+                                state.pending_clarification,
+                                resolved,
+                                item,
+                            )
+                        ],
+                    ]
+
+            missing, clarifications = await self._normalize_items(state, parsed.items, tool_calls)
             if parsed.requested_time:
                 state.requested_time = parsed.requested_time
 
+            if clarifications:
+                state.status = "collecting"
+                return await self._finish(state, " ".join(clarifications), "order.clarify", missing, tool_calls, None)
+
             if missing:
                 state.status = "collecting"
-                response = "No encontre estos productos en el menu, puedes precisarlos: " + "; ".join(missing)
+                response = "No encontré " + "; ".join(missing) + " en el menú. ¿Me lo repites o pides otra cosa?"
                 return await self._finish(state, response, "order.create", missing, tool_calls, None)
 
             if not state.items:
                 return await self._finish(
-                    state, "No logre identificar productos en tu pedido, que te gustaria pedir?",
+                    state, "No te entendí bien. ¿Qué te gustaría pedir?",
                     "order.create", [], tool_calls, None,
                 )
 
-            state.status = "awaiting_confirmation"
-            return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
+            return await self._advance_order(state, tool_calls)
 
         if parsed.intent == "order.confirm" and state.status == "awaiting_confirmation":
             order = await self._confirm_order(state, tool_calls)
             if order is None:
                 state.status = "collecting"
-                reason = state.unresolved[-1] if state.unresolved else "intenta nuevamente."
-                response = f"Hubo un problema al confirmar el pedido: {reason}"
+                reason = state.unresolved[-1] if state.unresolved else "intenta de nuevo."
+                response = f"Uy, hubo un problema: {reason}"
                 return await self._finish(state, response, "order.confirm", [], tool_calls, None)
 
             state.status = "closed"
-            time_part = f"Te lo entregamos a las {state.requested_time}. " if state.requested_time else ""
+            time_part = f" para las {order.requested_time}" if order.requested_time else ""
             response = (
-                f"Listo, tu pedido #{order.id} quedo confirmado por S/ {order.total:.2f}. "
-                f"{time_part}Te llegara la confirmacion por mensaje."
+                f"Listo, pedido confirmado{time_part}, son {_format_money_for_voice(order.total)}. "
+                "Te llega la confirmación por mensaje. ¡Gracias!"
             )
             return await self._finish(state, response, "order.confirm", [], tool_calls, order)
 
         if parsed.intent == "order.cancel":
-            state.items.clear()
+            _reset_order_draft(state)
             state.status = "collecting"
             return await self._finish(
-                state, "Sin problema, cancele lo que teniamos armado. Deseas pedir algo mas?",
+                state, "Listo, cancelado. ¿Deseas pedir algo más?",
                 "order.cancel", [], tool_calls, None,
             )
 
         return await self._finish(
-            state, "Puedes confirmar si deseas continuar con el pedido? Responde si o no.",
+            state, "¿Confirmas el pedido, sí o no?",
             parsed.intent, [], tool_calls, None,
         )
 
@@ -137,46 +460,362 @@ class AgentRuntime:
         data = CustomerCreate(name=payload.customer_name or "Cliente telefonico", phone=payload.customer_phone)
         customer = await CustomerService(self.session, self.tenant_id).get_or_create(data)
         await self.session.commit()
-        state.customer = {"id": customer.id, "name": customer.name, "phone": customer.phone}
+        state.customer = {"id": customer.id, "name": customer.name, "phone": customer.phone, "address": customer.address}
+        # Si el cliente dio su nombre explicitamente, o si ya existia en la
+        # ficha con un nombre real (cliente recurrente por telefono), no hace
+        # falta volver a preguntarlo durante la llamada.
+        if payload.customer_name or (customer.name and customer.name != "Cliente telefonico"):
+            state.has_real_name = True
 
     async def _call_tool(self, tool_calls: list[ToolCallOut], name: str, arguments: dict) -> dict:
         result = await self.tools.call(name, arguments)
         tool_calls.append(ToolCallOut(name=name, arguments=arguments, result=result))
         return result
 
+    async def _handle_menu_inquiry(
+        self, state: ConversationState, message: str, tool_calls: list[ToolCallOut]
+    ) -> AgentTurnOut:
+        modifier_kind = _detect_modifier_inquiry(message)
+        if modifier_kind:
+            options = ", ".join(_MODIFIER_OPTIONS[modifier_kind])
+            response = f"Tenemos {modifier_kind}: {options}. ¿Cuál te agrego?"
+            return await self._finish(state, response, "menu.inquiry", [], tool_calls, None)
+
+        category = _detect_menu_category(message)
+        result = await self._call_tool(tool_calls, "products.menu", {"category": category})
+        products = result.get("products", [])
+        if not products:
+            response = "Por ahora no tengo nada en esa categoría. ¿Quieres que te cuente el menú completo?"
+        else:
+            names = [f"{p['name']} a {_format_money_for_voice(p['price'])}" for p in products[:6]]
+            intro = "Tenemos: " if category else "Del menú tenemos: "
+            response = intro + ", ".join(names) + ". ¿Qué te provoca?"
+        return await self._finish(state, response, "menu.inquiry", [], tool_calls, None)
+
+    def _find_existing_item(self, state: ConversationState, query: str) -> OrderLineDraft | None:
+        """Busca en lo que el cliente ya lleva pedido un item que calce con
+        `query` (por token, igual que el matching de catalogo), para poder
+        resolver "aumenta las papas" / "quita la hamburguesa" contra la
+        linea correcta en vez de contra el catalogo entero."""
+        query_tokens = set(tokenize(query))
+        if not query_tokens:
+            return None
+        best, best_overlap = None, 0
+        for line in state.items:
+            overlap = len(query_tokens & set(tokenize(line.name)))
+            if overlap > best_overlap:
+                best, best_overlap = line, overlap
+        return best
+
     async def _normalize_items(
         self, state: ConversationState, parsed_items: list[ParsedItem], tool_calls: list[ToolCallOut]
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         missing: list[str] = []
+        clarifications: list[str] = []
+        # Terminos que quedaron ambiguos EN ESTE MISMO TURNO (ej. "hamburguesa"
+        # -> se pregunto cual variante). Si un item posterior del mismo mensaje
+        # resuelve a un producto cuyo nombre contiene ese termino (ej. "BBQ" ->
+        # "Hamburguesa BBQ"), lo mas probable es que sea la aclaracion de la
+        # misma frase dicha con una pausa ("una hamburguesa, BBQ"), no un
+        # pedido nuevo. Sin este chequeo se agregaba la BBQ ya resuelta Y
+        # ademas se preguntaba cual hamburguesa -- si el cliente contestaba
+        # "BBQ" a esa pregunta, terminaba con dos hamburguesas BBQ cobradas.
+        ambiguous_query_tokens: list[set[str]] = []
+
         for item in parsed_items:
+            action = item.action or "add"
+
+            if action in ("remove", "increase", "decrease", "set"):
+                existing = self._find_existing_item(state, item.query)
+                if not existing:
+                    if action == "remove":
+                        continue  # nada que quitar todavia, no es un error grave
+                    missing.append(item.raw_text)
+                    continue
+                if action == "remove":
+                    state.items.remove(existing)
+                elif action == "increase":
+                    existing.quantity += max(item.quantity, 1)
+                elif action == "decrease":
+                    existing.quantity -= max(item.quantity, 1)
+                    if existing.quantity <= 0:
+                        state.items.remove(existing)
+                elif action == "set":
+                    existing.quantity = max(item.quantity, 1)
+                continue
+
             result = await self._call_tool(tool_calls, "products.search", {"query": item.query})
             candidates = result.get("products", [])
             if not candidates:
+                category = _detect_menu_category(item.query)
+                if category:
+                    menu_result = await self._call_tool(tool_calls, "products.menu", {"category": category})
+                    options = menu_result.get("products", [])
+                    if options:
+                        option_names = ", ".join(option["name"] for option in options[:5])
+                        clarifications.append(f"¿Qué {item.query} prefieres: {option_names}?")
+                        state.pending_clarification = {"query": item.query, "options": options[:5]}
+                        continue
                 missing.append(item.raw_text)
                 continue
+
+            if result.get("ambiguous"):
+                # Termino generico ("hamburguesa") que calza igual con varias
+                # variantes: preguntamos en vez de adivinar cual.
+                options = ", ".join(c["name"] for c in candidates[:4])
+                clarifications.append(f"¿Cuál {item.query} prefieres: {options}?")
+                ambiguous_query_tokens.append(set(tokenize(item.query)))
+                state.pending_clarification = {"query": item.query, "options": candidates[:4]}
+                continue
+
             best = candidates[0]
-            state.items.append(
-                OrderLineDraft(
-                    product_id=best["id"], name=best["name"], quantity=item.quantity,
-                    unit_price=best["price"], notes=item.notes,
+            best_tokens = set(tokenize(best["name"]))
+            if any(qt and qt <= best_tokens for qt in ambiguous_query_tokens):
+                continue  # es la aclaracion de una ambiguedad de este mismo turno, no un item nuevo
+
+            # Un item resuelto solo debe cerrar la desambiguacion pendiente si
+            # realmente responde esa pregunta. En voz, el STT puede juntar
+            # "hamburguesa chicha morada" sin coma: se pregunta cual
+            # hamburguesa, pero la chicha se resuelve en el mismo turno. Si
+            # borraramos pending_clarification por cualquier producto resuelto,
+            # perderiamos la pregunta de la hamburguesa.
+            if state.pending_clarification:
+                pending_tokens = set(tokenize(str(state.pending_clarification.get("query", ""))))
+                if pending_tokens and pending_tokens & best_tokens:
+                    state.pending_clarification = None
+
+            existing = next((line for line in state.items if line.product_id == best["id"]), None)
+            if existing:
+                existing.quantity += item.quantity
+                if item.notes:
+                    existing.notes = f"{existing.notes}; {item.notes}" if existing.notes else item.notes
+            else:
+                state.items.append(
+                    OrderLineDraft(
+                        product_id=best["id"], name=best["name"], quantity=item.quantity,
+                        unit_price=best["price"], notes=item.notes,
+                    )
                 )
+        return missing, clarifications
+
+    def _next_missing_detail(self, state: ConversationState) -> str | None:
+        if not state.has_real_name:
+            return "name"
+        if not state.fulfillment_type:
+            return "fulfillment"
+        if state.fulfillment_type == "delivery" and not state.delivery_address:
+            return "address"
+        if not state.payment_method:
+            return "payment"
+        return None
+
+    async def _advance_order(self, state: ConversationState, tool_calls: list[ToolCallOut]) -> AgentTurnOut:
+        """Una vez que los items del pedido estan completos, pide los datos
+        que falten (nombre, delivery/recojo, direccion, forma de pago) antes
+        de pasar al resumen final. Un dato a la vez, en orden fijo."""
+        missing_detail = self._next_missing_detail(state)
+        if missing_detail:
+            state.status = f"need_{missing_detail}"
+            return await self._finish(state, _DETAIL_PROMPTS[missing_detail], "order.create", [], tool_calls, None)
+        state.status = "awaiting_confirmation"
+        return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
+
+    async def _handle_detail_answer(
+        self, state: ConversationState, message: str, tool_calls: list[ToolCallOut]
+    ) -> AgentTurnOut:
+        current = state.status
+        lowered = normalize_text(message)
+        words = set(lowered.split())
+        pending_key = current[len("need_"):]
+        pending_prompt = _DETAIL_PROMPTS[pending_key]
+
+        if is_audio_repair_message(message):
+            return await self._finish(state, f"Te escucho. {pending_prompt}", "smalltalk", [], tool_calls, None)
+
+        # Cancelar sigue disponible en cualquier momento, incluso a mitad de
+        # esta recoleccion de datos.
+        if words & CANCEL_WORDS:
+            _reset_order_draft(state)
+            state.status = "collecting"
+            return await self._finish(
+                state, "Listo, cancelado. ¿Deseas pedir algo más?", "order.cancel", [], tool_calls, None
             )
-        return missing
+
+        # Ruta ultrarrapida y segura: fulfillment/pago son vocabularios
+        # cerrados. Si calzan directo, no llamamos a Gemini.
+        if current == "need_fulfillment":
+            match = _match_fulfillment(lowered)
+            if match:
+                await self._apply_detail_answer(state, current, match)
+                return await self._advance_order(state, tool_calls)
+        elif current == "need_payment":
+            match = _match_payment(lowered)
+            if match:
+                await self._apply_detail_answer(state, current, match)
+                return await self._advance_order(state, tool_calls)
+
+        # Ruta barata y conservadora para texto libre obvio ("Carlos",
+        # "Av. Siempre Viva 123"). Si hay señales de pedido/menu/comando, no
+        # captura nada: pasa por NLU para no tragarse intenciones.
+        literal = _safe_literal_detail(current, message, lowered)
+        if literal:
+            await self._apply_detail_answer(state, current, literal)
+            return await self._advance_order(state, tool_calls)
+
+        provider = ai_router.get_provider()
+        parsed = await provider.parse_message(
+            message,
+            awaiting_confirmation=False,
+            pending_detail=pending_key,
+        )
+        state.used_fallback_this_turn = getattr(parsed, "used_fallback", False)
+
+        if parsed.intent == "handoff":
+            await self._call_tool(
+                tool_calls,
+                "conversation.transfer_to_human",
+                {"conversation_id": state.id, "reason": message},
+            )
+            state.status = "closed"
+            return await self._finish(
+                state, "Claro, te paso con alguien del equipo. Un momento.", "handoff", [], tool_calls, None
+            )
+
+        if parsed.intent == "menu.inquiry":
+            return await self._handle_menu_inquiry(state, message, tool_calls)
+
+        if parsed.requested_time:
+            state.requested_time = parsed.requested_time
+
+        if parsed.items or parsed.intent in ("order.create", "order.modify"):
+            missing, clarifications = await self._normalize_items(state, parsed.items, tool_calls)
+
+            if not state.items:
+                state.status = "collecting"
+                response = "Tu pedido quedó vacío. ¿Qué te gustaría pedir?"
+                if missing:
+                    response = "No encontré " + "; ".join(missing) + " en el menú. ¿Qué te gustaría pedir?"
+                return await self._finish(state, response, "order.create", missing, tool_calls, None)
+
+            if clarifications:
+                state.status = "collecting"
+                return await self._finish(state, " ".join(clarifications), "order.clarify", missing, tool_calls, None)
+
+            if parsed.detail_answer.answers_pending_question and parsed.detail_answer.value:
+                await self._apply_detail_answer(state, current, parsed.detail_answer.value)
+                return await self._advance_order(state, tool_calls)
+
+            if missing:
+                edit_ack = "No encontré " + "; ".join(missing) + " en el menú. "
+            elif parsed.items:
+                # Solo confirmamos "actualice el pedido" si de verdad se
+                # proceso algun item. Visto en vivo: un fragmento cortado por
+                # el STT ("Tambien quiero agregar", sin nombrar el producto
+                # todavia) clasificaba como order.modify sin items concretos
+                # -- decir "listo, actualice" ahi era falso y confundio al
+                # que llamaba (termino pidiendo un humano sin necesidad).
+                edit_ack = "Listo, actualicé el pedido. "
+            else:
+                edit_ack = ""
+            return await self._finish(state, edit_ack + pending_prompt, "order.modify", missing, tool_calls, None)
+
+        if parsed.detail_answer.answers_pending_question and parsed.detail_answer.value:
+            await self._apply_detail_answer(state, current, parsed.detail_answer.value)
+            return await self._advance_order(state, tool_calls)
+
+        # Ultima defensa: si no se entendio si respondia la pregunta o si
+        # queria modificar el pedido, no guardamos texto libre. Repreguntamos
+        # explicitamente para evitar corrupcion silenciosa de nombre/direccion.
+        return await self._finish(
+            state,
+            f"No quiero perder lo que dijiste. {pending_prompt}",
+            "detail.unclear",
+            [],
+            tool_calls,
+            None,
+        )
+
+    async def _apply_detail_answer(self, state: ConversationState, current: str, raw_value: str) -> None:
+        if current == "need_name":
+            name = _extract_name(raw_value)
+            state.customer = {**(state.customer or {}), "name": name}
+            state.has_real_name = True
+            if state.customer.get("id"):
+                await CustomerService(self.session, self.tenant_id).update_name(state.customer["id"], name)
+                await self.session.commit()
+            return
+
+        if current == "need_fulfillment":
+            value = _match_fulfillment(normalize_text(raw_value)) or normalize_text(raw_value)
+            if value not in {"delivery", "pickup"}:
+                return
+            state.fulfillment_type = value
+            if state.fulfillment_type == "delivery" and state.customer and state.customer.get("address"):
+                state.delivery_address = state.customer["address"]
+            return
+
+        if current == "need_address":
+            address = _extract_address(raw_value)
+            state.delivery_address = address
+            if state.customer:
+                # Tambien en el snapshot en memoria, no solo en state.delivery_address:
+                # si el mismo llamante pide de nuevo mas adelante en la misma
+                # llamada (ver _reset_order_draft), el auto-relleno de
+                # direccion en _apply_detail_answer("need_fulfillment") lee
+                # state.customer["address"] -- sin esto, usaria la direccion
+                # vieja que tenia la ficha al inicio de la llamada en vez de
+                # la que el cliente acaba de dar.
+                state.customer["address"] = address
+                if state.customer.get("id"):
+                    await CustomerService(self.session, self.tenant_id).update_address(state.customer["id"], address)
+                    await self.session.commit()
+            return
+
+        if current == "need_payment":
+            value = _match_payment(normalize_text(raw_value)) or normalize_text(raw_value)
+            if value not in {"efectivo", "yape", "plin", "tarjeta"}:
+                return
+            state.payment_method = value
 
     def _build_summary(self, state: ConversationState) -> str:
         lines = [
-            f"{item.quantity} x {item.name}" + (f" ({item.notes})" if item.notes else "")
+            f"{item.quantity} {item.name}" + (f" ({item.notes})" if item.notes else "")
             for item in state.items
         ]
         total = sum(item.quantity * item.unit_price for item in state.items)
         time_part = f" para las {state.requested_time}" if state.requested_time else ""
-        return "Tu pedido seria: " + "; ".join(lines) + f". Total S/ {total:.2f}{time_part}. Confirmas el pedido? (si/no)"
+
+        if state.fulfillment_type == "delivery":
+            place_part = f", delivery a {state.delivery_address}" if state.delivery_address else ", por delivery"
+        elif state.fulfillment_type == "pickup":
+            place_part = ", recojo en el local"
+        else:
+            place_part = ""
+
+        payment_part = f", pagas con {state.payment_method}" if state.payment_method else ""
+        name = state.customer.get("name") if state.customer else None
+        name_part = f" A nombre de {name}." if name else ""
+
+        return (
+            f"Perfecto: {', '.join(lines)}. Son {_format_money_for_voice(total)}{time_part}{place_part}{payment_part}."
+            f"{name_part} ¿Confirmas?"
+        )
 
     async def _confirm_order(self, state: ConversationState, tool_calls: list[ToolCallOut]) -> OrderOut | None:
         context: dict = {
-            "customer_id": state.customer["id"] if state.customer else None,
+            # .get(), no state.customer["id"]: un cliente sin telefono (chat
+            # web sin dar numero, o llamada con ID oculto) que despues da su
+            # nombre por voz llega aca con un dict {"name": ...} SIN "id" --
+            # ver _apply_detail_answer("need_name"). El acceso con corchetes
+            # tiraba KeyError y hacia caer la confirmacion entera del pedido.
+            # Reproducido en vivo antes de este fix.
+            "customer_id": state.customer.get("id") if state.customer else None,
+            "conversation_id": state.id,
             "requested_time": state.requested_time,
-            "channel": "whatsapp",
+            "fulfillment_type": state.fulfillment_type,
+            "delivery_address": state.delivery_address,
+            "payment_method": state.payment_method,
+            "channel": "whatsapp",  # canal de la notificacion de confirmacion, no el de la conversacion
             "items": [
                 {"product_id": item.product_id, "quantity": item.quantity, "notes": item.notes}
                 for item in state.items
@@ -197,7 +836,7 @@ class AgentRuntime:
             state.unresolved.append(run_result.error or "error desconocido")
             return None
 
-        state.items.clear()
+        _reset_order_draft(state)
         # Releemos el pedido en vez de reusar el dict capturado tras crearlo:
         # los pasos siguientes del workflow (schedule_delivery) lo modifican
         # (status pasa a "scheduled"), y la respuesta al usuario debe reflejar
@@ -226,12 +865,37 @@ class AgentRuntime:
         tool_calls: list[ToolCallOut],
         order: OrderOut | None,
     ) -> AgentTurnOut:
-        state.transcript.append(f"agente: {response}")
+        state.transcript.append(_transcript_line("agente", response))
         await self._persist_conversation(state, intent)
+        await self._persist_turn_metric(state, intent)
         return AgentTurnOut(
             response=response, intent=intent, missing=missing, tool_calls=tool_calls,
             order=order, conversation_id=state.id, status=state.status,
         )
+
+    async def _persist_turn_metric(self, state: ConversationState, intent: str) -> None:
+        # Observabilidad: cuanto tardo AgentRuntime en este turno especifico.
+        # No debe poder tumbar un turno real si algo sale mal aca -- es
+        # metrica, no logica de negocio -- por eso el try/except propio en
+        # vez de dejar que una excepcion aca reviente la respuesta al cliente.
+        if state.turn_started_at is None:
+            return
+        think_ms = int((time.monotonic() - state.turn_started_at) * 1000)
+        try:
+            self.session.add(
+                VoiceTurnMetric(
+                    tenant_id=self.tenant_id,
+                    conversation_id=state.id,
+                    channel=state.channel,
+                    intent=intent,
+                    status=state.status,
+                    think_ms=max(think_ms, 0),
+                    used_fallback=state.used_fallback_this_turn,
+                )
+            )
+            await self.session.commit()
+        except Exception:
+            logger.exception("No se pudo guardar VoiceTurnMetric conversation_id=%s", state.id)
 
     async def _persist_conversation(self, state: ConversationState, intent: str) -> None:
         convo = await self.session.scalar(
@@ -240,7 +904,7 @@ class AgentRuntime:
             )
         )
         transcript_text = "\n".join(state.transcript)
-        customer_id = state.customer["id"] if state.customer else None
+        customer_id = state.customer.get("id") if state.customer else None  # ver nota en _confirm_order
         db_status = "closed" if state.status == "closed" else "active"
 
         if convo:
@@ -254,7 +918,7 @@ class AgentRuntime:
                 tenant_id=self.tenant_id,
                 external_id=state.id,
                 customer_id=customer_id,
-                channel="web",
+                channel=state.channel,
                 status=db_status,
                 transcript=transcript_text,
                 outcome=intent if state.status == "closed" else None,

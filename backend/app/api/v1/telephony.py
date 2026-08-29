@@ -23,6 +23,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import Gather, VoiceResponse
@@ -31,7 +32,7 @@ from app.agents.runtime import AgentRuntime
 from app.agents.state import get_lock
 from app.agents.state import reset as reset_conversation
 from app.api.deps import get_db, get_tenant_id
-from app.domain.models import AuditLog
+from app.domain.models import AuditLog, Conversation
 from app.domain.schemas import AgentMessageIn
 from app.domain.services import ProductService
 from app.infrastructure.config import settings
@@ -40,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/telephony", tags=["telephony"])
 
-NO_INPUT_MESSAGE = "No logre escucharte. Puedes volver a llamar cuando gustes. Hasta luego."
-ERROR_MESSAGE = "Tuvimos un problema tecnico. Por favor intenta llamar de nuevo en un momento."
+NO_INPUT_MESSAGE = "No escuché nada. Llama de nuevo cuando quieras, ¡chau!"
+ERROR_MESSAGE = "Tuvimos un problema técnico. Intenta llamar en un momento."
 
 
 def _error_response() -> Response:
@@ -101,7 +102,7 @@ async def voice_incoming(
         async with get_lock(CallSid):
             runtime = AgentRuntime(session, tenant_id)
             turn = await runtime.handle_turn(
-                AgentMessageIn(message="Hola", conversation_id=CallSid, customer_phone=From or None)
+                AgentMessageIn(message="Hola", conversation_id=CallSid, customer_phone=From or None, channel="phone")
             )
             hints = await _speech_hints(session, tenant_id)
             return _gather_response(turn.response, hints)
@@ -123,11 +124,11 @@ async def voice_turn(
             hints = await _speech_hints(session, tenant_id)
 
             if not SpeechResult.strip():
-                return _gather_response("Disculpa, no te escuche bien. ¿Que te gustaria pedir?", hints)
+                return _gather_response("No te escuché bien, ¿qué decías?", hints)
 
             runtime = AgentRuntime(session, tenant_id)
             turn = await runtime.handle_turn(
-                AgentMessageIn(message=SpeechResult, conversation_id=CallSid, customer_phone=From or None)
+                AgentMessageIn(message=SpeechResult, conversation_id=CallSid, customer_phone=From or None, channel="phone")
             )
 
             if turn.status == "closed":
@@ -152,6 +153,16 @@ async def voice_status(
     tenant_id: str = Depends(get_tenant_id),
 ) -> dict:
     if CallStatus in {"completed", "busy", "failed", "no-answer", "canceled"}:
+        # Igual que en Telnyx: si colgaron sin llegar a un cierre explicito
+        # del agente (confirmar/cancelar/pedir humano), la conversacion se
+        # queda "active" en la DB para siempre si no la cerramos aqui.
+        convo = await session.scalar(
+            select(Conversation).where(Conversation.tenant_id == tenant_id, Conversation.external_id == CallSid)
+        )
+        if convo and convo.status != "closed":
+            convo.status = "closed"
+            if not convo.outcome:
+                convo.outcome = "call.ended"
         session.add(
             AuditLog(
                 tenant_id=tenant_id,

@@ -1,3 +1,4 @@
+import { MessageSquare, Phone } from "lucide-react";
 import { orderStatusLabel } from "@/lib/format";
 import type { OrderStatus } from "@/lib/types";
 
@@ -39,6 +40,21 @@ export function Pill({
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${toneClass}`}>
       {children}
+    </span>
+  );
+}
+
+export function ChannelBadge({ channel }: { channel: string }) {
+  const isPhone = channel === "phone";
+  const Icon = isPhone ? Phone : MessageSquare;
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+        isPhone ? "bg-accent-amber/15 text-accent-amber" : "bg-brand-500/15 text-brand-400"
+      }`}
+    >
+      <Icon size={12} />
+      {isPhone ? "Llamada" : "Chat web"}
     </span>
   );
 }

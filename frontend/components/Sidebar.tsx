@@ -6,6 +6,7 @@ import {
   Bot,
   ClipboardList,
   LayoutDashboard,
+  Phone,
   ScrollText,
   UtensilsCrossed,
   Users,
@@ -21,6 +22,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/agente", label: "Agente", icon: Bot },
+  { href: "/llamadas", label: "Llamadas", icon: Phone },
   { href: "/pedidos", label: "Pedidos", icon: ClipboardList },
   { href: "/productos", label: "Productos", icon: UtensilsCrossed },
   { href: "/clientes", label: "Clientes", icon: Users },

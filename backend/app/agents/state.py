@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,17 +26,53 @@ class OrderLineDraft:
 class ConversationState:
     id: str
     tenant_id: str
-    status: str = "collecting"  # collecting | awaiting_confirmation | closed
+    channel: str = "web"
+    # collecting | need_name | need_fulfillment | need_address | need_payment |
+    # awaiting_confirmation | closed
+    status: str = "collecting"
     items: list[OrderLineDraft] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     customer: dict[str, Any] | None = None
     requested_time: str | None = None
     transcript: list[str] = field(default_factory=list)
     last_touched_at: float = field(default_factory=time.monotonic)
+    silence_retries: int = 0
+    speaking: bool = False  # True mientras el agente esta reproduciendo audio (telefonia, barge-in)
+    # Datos de entrega/pago que el agente pregunta antes de cerrar el pedido
+    # (ver AgentRuntime._next_missing_detail). has_real_name distingue un
+    # nombre real (dado por el cliente o ya en la ficha) del fallback
+    # "Cliente telefonico" que se usa solo para poder crear el registro.
+    has_real_name: bool = False
+    fulfillment_type: str | None = None  # delivery | pickup
+    delivery_address: str | None = None
+    payment_method: str | None = None  # efectivo | yape | plin | tarjeta
+    # Observabilidad (ver VoiceTurnMetric en domain/models.py): timestamp de
+    # inicio del turno en curso, para medir cuanto tarda AgentRuntime en
+    # responder -- el tramo que si controlamos (Deepgram/Telnyx no exponen
+    # su propia latencia interna de STT/TTS). No se persiste a DB, solo vive
+    # mientras dura el turno.
+    turn_started_at: float | None = None
+    used_fallback_this_turn: bool = False
+    # Ultima pregunta de desambiguacion de producto pendiente (ej. "Cual
+    # hamburguesa prefieres: BBQ, Clasica, Doble, Vegetariana?"), para poder
+    # resolver una respuesta elptica como "vegetariana" o "Pero te dije
+    # vegetariana" en el turno siguiente -- ver
+    # AgentRuntime._resolve_pending_clarification. None si no hay ninguna
+    # pregunta de este tipo pendiente.
+    pending_clarification: dict[str, Any] | None = None
 
 
 _STORE: dict[str, ConversationState] = {}
 _LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def peek(conversation_id: str) -> ConversationState | None:
+    """Como get_or_create, pero NUNCA crea una entrada nueva -- solo mira si
+    ya existe. Pensado para quien necesita saber "ya habia una conversacion
+    para este ID" sin la logica de negocio completa del runtime (ver
+    voice_agent_bridge.py: decidir si repetir el saludo completo o no
+    cuando Telnyx reconecta el stream de audio a mitad de una llamada)."""
+    return _STORE.get(conversation_id)
 
 
 def get_or_create(conversation_id: str | None, tenant_id: str) -> ConversationState:
@@ -78,3 +115,34 @@ def get_lock(conversation_id: str) -> asyncio.Lock:
 def reset(conversation_id: str) -> None:
     _STORE.pop(conversation_id, None)
     _LOCKS.pop(conversation_id, None)
+
+
+# Llamadas ya colgadas, compartido entre el flujo viejo de Call Control
+# (telephony_telnyx.py) y el puente nuevo de Voice Agent (agent_llm_proxy.py):
+# ambos pueden recibir un evento/request tardio para el MISMO call_control_id
+# despues de que call.hangup ya se proceso y reset() ya vacio el estado. Sin
+# este marcador compartido, un "think" tardio de Deepgram que llega justo
+# despues del hangup (la llamada ya termino, pero Deepgram todavia estaba
+# terminando de pensar la ultima frase) pasaba por get_or_create(), creaba un
+# ConversationState nuevo en blanco, y _persist_conversation() volvia a poner
+# "active" una conversacion que el hangup ya habia cerrado -- una llamada
+# fantasma reabierta en la DB despues de haber terminado. Vive separado de
+# _STORE/_LOCKS a proposito: reset() los vacia, pero esto tiene que sobrevivir
+# para poder reconocer que ese call_control_id ya no existe.
+_MAX_HUNG_UP = 500
+_hung_up_calls: set[str] = set()
+_hung_up_order: deque[str] = deque(maxlen=_MAX_HUNG_UP)
+
+
+def mark_hung_up(conversation_id: str) -> None:
+    if conversation_id in _hung_up_calls:
+        return
+    if len(_hung_up_order) >= _MAX_HUNG_UP:
+        oldest = _hung_up_order.popleft()
+        _hung_up_calls.discard(oldest)
+    _hung_up_order.append(conversation_id)
+    _hung_up_calls.add(conversation_id)
+
+
+def is_hung_up(conversation_id: str) -> bool:
+    return conversation_id in _hung_up_calls

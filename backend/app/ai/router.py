@@ -1,6 +1,10 @@
+import logging
+
 from app.ai.base import LLMProvider
 from app.ai.rule_based import RuleBasedProvider
 from app.infrastructure.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AIRouter:
@@ -14,12 +18,22 @@ class AIRouter:
 
     def get_provider(self) -> LLMProvider:
         if settings.llm_provider not in self._providers:
-            self._providers[settings.llm_provider] = self._build(settings.llm_provider)
+            try:
+                self._providers[settings.llm_provider] = self._build(settings.llm_provider)
+            except Exception:
+                logger.exception(
+                    "No se pudo activar LLM_PROVIDER=%s; usando rule_based como fallback.",
+                    settings.llm_provider,
+                )
+                self._providers[settings.llm_provider] = self._providers["rule_based"]
+                return self._providers["rule_based"]
         return self._providers[settings.llm_provider]
 
     def _build(self, name: str) -> LLMProvider:
         if name == "gemini":
-            from app.ai.gemini import GeminiProvider  # import perezoso: no exige el SDK si no se usa
+            from app.ai.gemini import (
+                GeminiProvider,  # import perezoso: no exige el SDK si no se usa
+            )
 
             return GeminiProvider()
         raise NotImplementedError(f"Proveedor de IA no soportado todavia: {name}")

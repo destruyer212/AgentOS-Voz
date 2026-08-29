@@ -1,6 +1,6 @@
 """Seed de datos demo para poder probar el caso restaurante sin configurar nada.
 
-Idempotente: si el tenant demo ya tiene productos, no vuelve a insertar.
+Idempotente: inserta solo los SKUs demo que falten, sin duplicar catalogo.
 """
 
 from sqlalchemy import select
@@ -9,15 +9,25 @@ from app.domain.models import Customer, InventoryItem, Product, Tenant
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal
 
-# sku, nombre, descripcion, precio, stock inicial
+# sku, nombre, descripcion, precio, categoria, stock inicial
 DEMO_PRODUCTS = [
-    ("HB-CLA", "Hamburguesa Clasica", "Carne, queso, lechuga y tomate", 12.90, 50),
-    ("HB-DOB", "Hamburguesa Doble", "Doble carne, doble queso", 18.90, 40),
-    ("HB-BBQ", "Hamburguesa BBQ", "Carne, cebolla caramelizada y salsa BBQ", 19.90, 30),
-    ("BEB-INCA", "Inca Kola 500ml", "Gaseosa Inca Kola personal", 5.50, 100),
-    ("BEB-COCA", "Coca-Cola 500ml", "Gaseosa Coca-Cola personal", 5.50, 100),
-    ("PAP-CLA", "Papas Fritas Clasicas", "Porcion clasica de papas fritas", 8.90, 60),
-    ("POS-VOL", "Volcan de Chocolate", "Postre de chocolate con centro fundente", 9.90, 25),
+    ("HB-CLA", "Hamburguesa Clasica", "Carne, queso, lechuga y tomate", 12.90, "hamburguesa", 50),
+    ("HB-DOB", "Hamburguesa Doble", "Doble carne, doble queso", 18.90, "hamburguesa", 40),
+    ("HB-BBQ", "Hamburguesa BBQ", "Carne, cebolla caramelizada y salsa BBQ", 19.90, "hamburguesa", 30),
+    ("HB-VEG", "Hamburguesa Vegetariana", "Base de vegetales, palta y queso", 16.90, "hamburguesa", 25),
+    ("BEB-INCA", "Inca Kola 500ml", "Gaseosa Inca Kola personal", 5.50, "bebida", 100),
+    ("BEB-COCA", "Coca-Cola 500ml", "Gaseosa Coca-Cola personal", 5.50, "bebida", 100),
+    ("BEB-CHI", "Chicha Morada 500ml", "Chicha morada casera", 6.50, "bebida", 60),
+    ("BEB-LIM", "Limonada 500ml", "Limonada frozen", 6.50, "bebida", 60),
+    ("BEB-AGU", "Agua Mineral 500ml", "Agua sin gas", 3.50, "bebida", 80),
+    ("PAP-CLA", "Papas Fritas Clasicas", "Porcion clasica de papas fritas", 8.90, "acompanamiento", 60),
+    ("PAP-QUE", "Papas Fritas con Queso", "Papas fritas bañadas en queso cheddar", 11.90, "acompanamiento", 40),
+    ("ARO-CEB", "Aros de Cebolla", "Porcion de aros de cebolla crocantes", 9.90, "acompanamiento", 35),
+    ("NUG-POL", "Nuggets de Pollo", "6 unidades con salsa a elegir", 10.90, "acompanamiento", 35),
+    ("ENS-FRE", "Ensalada Fresca", "Lechuga, tomate y palta", 7.90, "acompanamiento", 30),
+    ("POS-VOL", "Volcan de Chocolate", "Postre de chocolate con centro fundente", 9.90, "postre", 25),
+    ("POS-ALF", "Alfajor", "Alfajor relleno de manjar blanco", 4.50, "postre", 40),
+    ("POS-HEL", "Helado 2 Bolas", "Helado artesanal, sabores a elegir", 7.90, "postre", 30),
 ]
 
 
@@ -29,18 +39,20 @@ async def seed_demo_data() -> None:
             session.add(tenant)
             await session.flush()
 
-        existing = (
+        existing_products = (
             await session.execute(select(Product).where(Product.tenant_id == tenant.id))
-        ).scalars().first()
+        ).scalars().all()
+        existing_skus = {product.sku for product in existing_products}
 
-        if existing is None:
-            for sku, name, description, price, stock in DEMO_PRODUCTS:
+        for sku, name, description, price, category, stock in DEMO_PRODUCTS:
+            if sku not in existing_skus:
                 product = Product(
                     tenant_id=tenant.id,
                     sku=sku,
                     name=name,
                     description=description,
                     price=price,
+                    category=category,
                 )
                 session.add(product)
                 await session.flush()
@@ -48,6 +60,10 @@ async def seed_demo_data() -> None:
                     InventoryItem(tenant_id=tenant.id, product_id=product.id, quantity=stock, reserved=0)
                 )
 
+        existing_customer = await session.scalar(
+            select(Customer).where(Customer.tenant_id == tenant.id, Customer.phone == "+51999999999")
+        )
+        if existing_customer is None:
             session.add(
                 Customer(
                     tenant_id=tenant.id,

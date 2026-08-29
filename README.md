@@ -33,9 +33,10 @@ Esto ya funciona de punta a punta, no es solo un plan:
 | NLU en espanol (reglas propias + Gemini real, con fallback automatico) | Funcionando |
 | Motor de tools (unica puerta de entrada del agente al negocio) | Funcionando |
 | Motor de workflows (pasos, condiciones, auditoria de ejecucion) | Funcionando |
-| Frontend (dashboard, chat con el agente, pedidos, productos, clientes, auditoria) | Funcionando |
+| Frontend (dashboard, chat con el agente, llamadas, pedidos, productos, clientes, auditoria) | Funcionando |
 | Telefonia real -- Twilio | Integrado (falta numero verificado) |
 | Telefonia real -- Telnyx | Integrado y probado con numero real |
+| Voice Engine V2 -- Telnyx Media Streaming + Deepgram Voice Agent | Integrado detras de flags |
 | Voz por navegador (WebRTC) | No empezado |
 | Auth / RBAC | No empezado |
 
@@ -69,7 +70,7 @@ Sin `GEMINI_API_KEY` el sistema sigue funcionando con un NLU basado en reglas
 
 ```text
 Canales
-  Chat web | API | Llamada telefonica (Twilio / Telnyx) | Voz navegador (pendiente)
+  Chat web | API | Llamada telefonica (Twilio / Telnyx / Deepgram bridge) | Voz navegador (pendiente)
     |
 Agent Runtime
   estado de conversacion, memoria de turno, handoff a humano
@@ -110,7 +111,7 @@ AgentOS Voz/
 │       ├── tools/           unica puerta de entrada del agente al negocio
 │       ├── integrations/    Twilio, Telnyx, notificaciones
 │       └── infrastructure/  config, base de datos, seed de demo
-├── frontend/           Next.js: dashboard, chat, pedidos, productos, clientes, auditoria
+├── frontend/           Next.js: dashboard, chat, llamadas, pedidos, productos, clientes, auditoria
 ├── docs/               vision, arquitectura y decisiones tecnicas del proyecto
 └── infra/
 ```
@@ -123,13 +124,14 @@ AgentOS Voz/
 | Base de datos | SQLite (dev) / PostgreSQL (produccion) |
 | IA | Gemini (real) con fallback a NLU por reglas propias |
 | Frontend | Next.js 15 + TypeScript + Tailwind (Server Components + Server Actions) |
-| Telefonia | Twilio Voice y Telnyx Call Control (ambos reusan el mismo runtime del agente) |
+| Telefonia | Twilio Voice, Telnyx Call Control y Telnyx Media Streaming con Deepgram Voice Agent |
 
 ## Lo que falta
 
 - Voz por navegador (WebRTC) -- para probar el agente hablando desde el navegador antes de ir a telefonia real.
 - Auth / RBAC -- hoy no hay login; cualquiera que le pegue a la API opera como el tenant demo.
 - Postgres + Redis en Docker Compose para un entorno de "produccion chica" real.
+- Migraciones Alembic -- hoy SQLite crea tablas automaticamente, util para demo pero no para evolucionar produccion.
 - Generalizar el dominio mas alla de restaurante (hoteles, clinicas, talleres...) -- el motor ya es generico, el modelo de datos y los prompts todavia estan pensados en restaurante.
 
 Ver [docs/](docs/) para la vision completa y el roadmap por sprints.

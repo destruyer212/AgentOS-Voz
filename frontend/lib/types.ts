@@ -8,6 +8,7 @@ export interface ProductOut {
   name: string;
   description: string | null;
   price: number;
+  category: string;
   stock_available: number;
 }
 
@@ -38,8 +39,12 @@ export interface OrderOut {
   id: number;
   customer_id: number | null;
   customer_name: string | null;
+  conversation_id: string | null;
   status: OrderStatus;
   requested_time: string | null;
+  fulfillment_type: "delivery" | "pickup" | string | null;
+  delivery_address: string | null;
+  payment_method: "efectivo" | "yape" | "plin" | "tarjeta" | string | null;
   total: number;
   items: OrderItemOut[];
 }
@@ -64,7 +69,14 @@ export interface ToolCallOut {
   result: Record<string, unknown>;
 }
 
-export type ConversationStatus = "collecting" | "awaiting_confirmation" | "closed";
+export type ConversationStatus =
+  | "collecting"
+  | "need_name"
+  | "need_fulfillment"
+  | "need_address"
+  | "need_payment"
+  | "awaiting_confirmation"
+  | "closed";
 
 export interface AgentTurnOut {
   response: string;
@@ -81,6 +93,32 @@ export interface AgentMessageIn {
   conversation_id?: string;
   customer_phone?: string;
   customer_name?: string;
+  channel?: "web" | "phone";
+}
+
+export type ConversationChannel = "web" | "phone" | string;
+
+export interface ConversationOut {
+  id: string;
+  channel: ConversationChannel;
+  status: "active" | "closed" | string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  outcome: string | null;
+  turns: number;
+  last_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationTurnOut {
+  role: "cliente" | "agente" | "sistema";
+  text: string;
+}
+
+export interface ConversationDetailOut extends ConversationOut {
+  transcript: ConversationTurnOut[];
+  order: OrderOut | null;
 }
 
 export interface AuditLogEntry {

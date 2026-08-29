@@ -2,7 +2,8 @@
 agente (o el workflow engine) puede tocar el negocio: LLM -> Tool ->
 Domain Service -> DB transaction. Nunca al reves."""
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,7 @@ class ToolRegistry:
     def _tools(self) -> dict[str, ToolHandler]:
         return {
             "products.search": self.search_products,
+            "products.menu": self.menu_products,
             "customers.get": self.get_customer,
             "customers.get_or_create": self.get_or_create_customer,
             "orders.create_confirmed": self.create_confirmed_order,
@@ -37,7 +39,19 @@ class ToolRegistry:
         return await tools[name](arguments)
 
     async def search_products(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        products = await ProductService(self.session, self.tenant_id).search(arguments.get("query", ""))
+        scored = await ProductService(self.session, self.tenant_id).search_scored(arguments.get("query", ""))
+        # "ambiguo": el termino calza igual de bien con 2+ productos distintos
+        # (ej. "hamburguesa" solo, sin decir cual) -- quien llama debe
+        # preguntar cual en vez de adivinar (antes se quedaba con el primero
+        # del orden alfabetico, silenciosamente).
+        ambiguous = len(scored) > 1 and scored[0][0] == scored[1][0]
+        return {
+            "products": [product.model_dump() for _, product in scored],
+            "ambiguous": ambiguous,
+        }
+
+    async def menu_products(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        products = await ProductService(self.session, self.tenant_id).list_all(category=arguments.get("category"))
         return {"products": [product.model_dump() for product in products]}
 
     async def get_customer(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -71,7 +85,11 @@ class ToolRegistry:
     async def create_confirmed_order(self, arguments: dict[str, Any]) -> dict[str, Any]:
         data = OrderCreate(
             customer_id=arguments.get("customer_id"),
+            conversation_id=arguments.get("conversation_id"),
             requested_time=arguments.get("requested_time"),
+            fulfillment_type=arguments.get("fulfillment_type"),
+            delivery_address=arguments.get("delivery_address"),
+            payment_method=arguments.get("payment_method"),
             items=[OrderItemIn(**item) for item in arguments.get("items", [])],
         )
         order = await OrderService(self.session, self.tenant_id).create_confirmed_order(data)

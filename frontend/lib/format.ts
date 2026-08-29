@@ -47,13 +47,36 @@ export function orderStatusLabel(status: string): string {
 export const INTENT_LABEL: Record<string, string> = {
   "order.create": "Pedido en curso",
   "order.modify": "Pedido modificado",
+  "order.clarify": "Aclarando pedido",
   "order.confirm": "Pedido confirmado",
   "order.cancel": "Pedido cancelado",
   "order.unclear": "Sin definir",
+  "menu.inquiry": "Consultó el menú",
+  "detail.unclear": "Sin definir",
   smalltalk: "Conversación",
   handoff: "Transferencia a humano",
 };
 
 export function intentLabel(intent: string): string {
   return INTENT_LABEL[intent] ?? intent;
+}
+
+export const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  efectivo: "Efectivo",
+  yape: "Yape",
+  plin: "Plin",
+  tarjeta: "Tarjeta",
+};
+
+export function paymentMethodLabel(method: string): string {
+  return PAYMENT_METHOD_LABEL[method] ?? method;
+}
+
+export const FULFILLMENT_LABEL: Record<string, string> = {
+  delivery: "Delivery",
+  pickup: "Recojo en local",
+};
+
+export function fulfillmentLabel(type: string): string {
+  return FULFILLMENT_LABEL[type] ?? type;
 }

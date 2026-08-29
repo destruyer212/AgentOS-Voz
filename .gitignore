@@ -11,12 +11,15 @@ backend/.env
 backend/*.db
 backend/*.db-journal
 backend/.bin/
+backend/runtime_logs/
+backend/test_agentos.db
 
 # Node / frontend
 node_modules/
 .next/
 out/
 frontend/.env*
+!frontend/.env.local.example
 
 # Editors / OS
 .vscode/

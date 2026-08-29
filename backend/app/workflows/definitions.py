@@ -18,7 +18,15 @@ RESTAURANT_ORDER_FULFILLMENT = WorkflowDefinition(
             key="create_order",
             type="tool",
             tool="orders.create_confirmed",
-            input_map={"customer_id": "customer_id", "requested_time": "requested_time", "items": "items"},
+            input_map={
+                "customer_id": "customer_id",
+                "conversation_id": "conversation_id",
+                "requested_time": "requested_time",
+                "fulfillment_type": "fulfillment_type",
+                "delivery_address": "delivery_address",
+                "payment_method": "payment_method",
+                "items": "items",
+            },
             output_key="order_result",
         ),
         WorkflowStep(

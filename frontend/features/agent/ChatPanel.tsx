@@ -18,6 +18,10 @@ interface ChatMessage {
 
 const CONVERSATION_STATUS_LABEL: Record<string, string> = {
   collecting: "Recopilando pedido",
+  need_name: "Pidiendo el nombre",
+  need_fulfillment: "Preguntando delivery o recojo",
+  need_address: "Pidiendo la dirección",
+  need_payment: "Preguntando forma de pago",
   awaiting_confirmation: "Esperando confirmación",
   closed: "Conversación cerrada",
 };
@@ -41,6 +45,12 @@ export function ChatPanel() {
   const [showCustomerFields, setShowCustomerFields] = useState(false);
   const [isPending, startTransition] = useTransition();
   const listRef = useRef<HTMLDivElement>(null);
+  // Incrementado en reset(): si el usuario arranca "Nueva conversación"
+  // mientras una respuesta anterior sigue en vuelo, la respuesta que llegue
+  // tarde queda con un numero de sesion viejo y se descarta en vez de
+  // colarse (conversationId y mensajes) en el chat nuevo que ya se ve en
+  // pantalla.
+  const sessionRef = useRef(0);
 
   function pushMessage(msg: ChatMessage) {
     setMessages((prev) => [...prev, msg]);
@@ -56,6 +66,7 @@ export function ChatPanel() {
     pushMessage({ id: newId(), role: "user", text: trimmed });
     setInput("");
 
+    const session = sessionRef.current;
     startTransition(async () => {
       const result = await sendAgentTurnAction({
         message: trimmed,
@@ -63,6 +74,8 @@ export function ChatPanel() {
         customer_name: customerName || undefined,
         customer_phone: customerPhone || undefined,
       });
+
+      if (session !== sessionRef.current) return; // se reseteo el chat mientras esperabamos la respuesta
 
       if (!result.ok || !result.data) {
         pushMessage({ id: newId(), role: "error", text: result.error ?? "Error desconocido." });
@@ -81,6 +94,7 @@ export function ChatPanel() {
   }
 
   function reset() {
+    sessionRef.current += 1;
     setMessages([]);
     setConversationId(null);
     setLastTurn(null);
@@ -166,6 +180,8 @@ export function ChatPanel() {
               type="button"
               onClick={() => setShowCustomerFields((v) => !v)}
               title="Datos del cliente"
+              aria-label="Datos del cliente"
+              aria-pressed={showCustomerFields}
               className={`shrink-0 rounded-lg border px-2.5 py-2.5 transition-colors ${
                 showCustomerFields
                   ? "border-brand-500 text-brand-400"
@@ -187,7 +203,12 @@ export function ChatPanel() {
               placeholder="Escribe un mensaje..."
               className="form-input resize-none"
             />
-            <button type="submit" disabled={isPending || !input.trim()} className="btn-primary shrink-0">
+            <button
+              type="submit"
+              disabled={isPending || !input.trim()}
+              aria-label="Enviar mensaje"
+              className="btn-primary shrink-0"
+            >
               <Send size={15} />
             </button>
           </div>
