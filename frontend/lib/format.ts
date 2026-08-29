@@ -55,6 +55,8 @@ export const INTENT_LABEL: Record<string, string> = {
   "detail.unclear": "Sin definir",
   smalltalk: "Conversación",
   handoff: "Transferencia a humano",
+  "call.hangup": "Colgó sin confirmar",
+  "session.timeout": "Cerrada por inactividad",
 };
 
 export function intentLabel(intent: string): string {
@@ -142,6 +144,33 @@ const DETAIL_STATUS_STAGE: Record<string, CallStageKey> = {
   need_payment: "details",
   awaiting_confirmation: "confirming",
 };
+
+// Clasificacion de la lista de Llamadas (no del flujo grafico de una sola
+// llamada, eso es callStage): en que balde cae cada conversacion para poder
+// agruparlas -- en curso, con pedido confirmado, transferida a un humano, o
+// cerrada sin pedido (colgo, cancelo, se quedo sin actividad, etc). Todo a
+// partir de status/outcome reales, igual que callStage.
+export type ConversationBucket = "live" | "confirmed" | "handoff" | "unconfirmed";
+
+export const CONVERSATION_BUCKET_LABEL: Record<ConversationBucket, string> = {
+  live: "En curso",
+  confirmed: "Confirmados",
+  handoff: "Transferidos",
+  unconfirmed: "Sin confirmar",
+};
+
+export function conversationBucket(input: { status: string; outcome: string | null }): ConversationBucket {
+  if (input.status !== "closed") return "live";
+  if (input.outcome === "order.confirm") return "confirmed";
+  if (input.outcome === "handoff") return "handoff";
+  return "unconfirmed";
+}
+
+export function conversationOutcomeLabel(input: { status: string; outcome: string | null }): string {
+  if (input.status !== "closed") return "En curso";
+  if (!input.outcome) return "Cerrada sin pedido";
+  return intentLabel(input.outcome);
+}
 
 export function callStage(input: {
   status: string;
