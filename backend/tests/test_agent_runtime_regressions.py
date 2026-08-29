@@ -1006,3 +1006,21 @@ async def test_hours_inquiry_mid_detail_collection_repeats_pending_question():
             assert state.status == "need_payment"  # el pedido sigue donde estaba
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_bare_confirm_word_outside_confirmation_is_not_a_product_search():
+    # Bug real, visto en vivo: "Sí." solo, dicho SIN que hubiera una
+    # pregunta de confirmacion pendiente (ej. el cliente repitiendo algo
+    # que dijo el agente), caia al parser de items y se buscaba como
+    # producto ("No encontré Sí en el menú").
+    provider = RuleBasedProvider()
+    for message in ("Sí.", "No."):
+        parsed = await provider.parse_message(message, awaiting_confirmation=False)
+        assert parsed.intent == "smalltalk"
+        assert parsed.items == []
+
+    # Con una confirmacion de verdad pendiente, debe seguir funcionando.
+    parsed = await provider.parse_message("Sí.", awaiting_confirmation=True)
+    assert parsed.intent == "order.confirm"
+    assert parsed.confirms is True

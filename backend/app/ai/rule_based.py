@@ -496,6 +496,16 @@ class RuleBasedProvider:
                 return ParsedMessage(intent="order.modify", items=items, requested_time=requested_time)
             return ParsedMessage(intent="order.unclear", confirms=None)
 
+        # Bug real, visto en vivo: "Sí." o "No." sueltos, dichos SIN que
+        # hubiera una pregunta de confirmacion pendiente, caian al parser de
+        # items -- "si"/"no" sobreviven tokenize() (no son stopwords) asi
+        # que se buscaban como si fueran un producto ("No encontré Sí en el
+        # menú"). Fuera de un contexto de confirmacion, una afirmacion o
+        # negacion sola nunca es un pedido.
+        words = set(lowered.split())
+        if words and (words <= CONFIRM_WORDS or words <= CANCEL_WORDS):
+            return ParsedMessage(intent="smalltalk")
+
         if any(phrase in lowered for phrase in HANDOFF_PHRASES):
             return ParsedMessage(intent="handoff", wants_human=True)
 
