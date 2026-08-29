@@ -13,6 +13,9 @@ backend/*.db-journal
 backend/.bin/
 backend/runtime_logs/
 backend/test_agentos.db
+# Imagenes de la carta escaneada usadas solo para extraer el menu a mano
+# (olivar_menu.py) -- no las lee la app, no hace falta versionarlas (36MB).
+backend/data/
 
 # Node / frontend
 node_modules/

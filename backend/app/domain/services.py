@@ -12,7 +12,7 @@ from app.domain.models import (
     Product,
 )
 from app.domain.schemas import CustomerCreate, OrderCreate, OrderItemOut, OrderOut, ProductOut
-from app.domain.text_utils import tokenize, tokens_partial_match
+from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
 
 _PRODUCT_QUERY_ALIASES = {
     "inca cola": "inca kola",
@@ -73,9 +73,11 @@ class ProductService:
         query_tokens = tokenize(_canonical_product_query(query))
         if not query_tokens:
             return []
+        normalized_query = normalize_text(_canonical_product_query(query))
 
         scored: list[tuple[float, Product, InventoryItem]] = []
         for product, inventory in await self._active_with_inventory():
+            normalized_name = normalize_text(product.name)
             name_tokens = tokenize(product.name)
             token_score = 0.0
             for qt in query_tokens:
@@ -93,6 +95,10 @@ class ProductService:
             if token_score == 0:
                 continue
             score = round(token_score / len(query_tokens), 4)
+            if normalized_query == normalized_name:
+                score += 2.0
+            elif normalized_query in normalized_name:
+                score += 0.25
             scored.append((score, product, inventory))
 
         scored.sort(key=lambda row: (-row[0], row[1].name))

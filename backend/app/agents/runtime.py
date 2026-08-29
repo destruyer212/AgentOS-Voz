@@ -48,10 +48,58 @@ _DETAIL_PROMPTS = {
 # reales de esa categoria en vez de un "no encontre" generico.
 _MENU_CATEGORY_KEYWORDS = {
     "bebida": ["bebida", "bebidas", "tomar", "beber", "gaseosa", "gaseosas", "jugo", "refresco", "tragos"],
+    "bebida_caliente": ["bebida caliente", "bebidas calientes", "infusion", "infusiones", "te", "anis", "manzanilla"],
+    "entrada": ["entrada", "entradas", "piqueito", "para empezar", "choclo", "yuca", "yucas", "salchipapa"],
+    "ensalada": ["ensalada", "ensaladas"],
+    "pollo_brasa": ["pollo a la brasa", "brasa", "pollos", "pollo", "huayrito"],
+    "oferta": ["oferta", "ofertas", "combo", "combos", "promocion", "promociones", "oferton"],
+    "fusion": ["fusion", "fusiones", "mixto", "anticucho", "mollejitas"],
+    "parrilla_personal": ["parrilla", "parrillas", "personal", "churrasco", "chuleta", "bife", "brocheta", "brochetas", "alitas"],
+    "parrilla_familiar": ["familiar", "familiares", "para dos", "parrilla familiar"],
+    "piqueo": ["piqueo", "piqueos", "chicharron"],
+    "wok_criollo": ["criollo", "wok", "saltado", "tallarin", "tallarin saltado", "sopa"],
+    "pasta": ["pasta", "pastas", "fetuccini", "fettuccini", "huancaina", "alfredo", "pesto"],
+    "chaufa": ["chaufa", "chaufas", "aeropuerto", "mostro"],
+    "complemento": ["complemento", "complementos", "guarnicion", "guarniciones", "papas", "arroz", "chorizo"],
+    "menu": ["almuerzo", "lunes", "viernes", "ejecutivo"],
     "hamburguesa": ["hamburguesa", "hamburguesas"],
     "acompanamiento": ["papas", "acompañamiento", "acompanamiento", "acompañamientos", "piqueo", "entrada", "entradas"],
     "postre": ["postre", "postres", "dulce", "dulces"],
 }
+
+_MENU_CATEGORY_LABELS = {
+    "bebida": "bebidas",
+    "bebida_caliente": "bebidas calientes",
+    "entrada": "entradas",
+    "ensalada": "ensaladas",
+    "pollo_brasa": "pollos a la brasa",
+    "oferta": "ofertas",
+    "fusion": "fusiones",
+    "parrilla_personal": "parrillas personales",
+    "parrilla_familiar": "parrillas familiares",
+    "piqueo": "piqueos",
+    "wok_criollo": "wok criollo",
+    "pasta": "pastas",
+    "chaufa": "chaufas",
+    "complemento": "complementos",
+    "menu": "menús de lunes a viernes",
+    "postre": "postres",
+}
+
+_MENU_OVERVIEW_CATEGORIES = (
+    "pollo_brasa",
+    "oferta",
+    "parrilla_personal",
+    "parrilla_familiar",
+    "wok_criollo",
+    "pasta",
+    "chaufa",
+    "entrada",
+    "piqueo",
+    "ensalada",
+    "postre",
+    "bebida",
+)
 
 _MODIFIER_OPTIONS = {
     "cremas": ["ají", "mayonesa", "ketchup", "tártara", "huancaína"],
@@ -493,9 +541,24 @@ class AgentRuntime:
         products = result.get("products", [])
         if not products:
             response = "Por ahora no tengo nada en esa categoría. ¿Quieres que te cuente el menú completo?"
+        elif not category:
+            available_categories = {p["category"] for p in products}
+            category_names = [
+                _MENU_CATEGORY_LABELS[cat]
+                for cat in _MENU_OVERVIEW_CATEGORIES
+                if cat in available_categories
+            ]
+            readable_categories = (
+                category_names[0]
+                if len(category_names) == 1
+                else ", ".join(category_names[:-1]) + f" y {category_names[-1]}"
+            )
+            response = (
+                f"Tenemos {readable_categories}. ¿Qué categoría te provoca?"
+            )
         else:
             names = [f"{p['name']} a {_format_money_for_voice(p['price'])}" for p in products[:6]]
-            intro = "Tenemos: " if category else "Del menú tenemos: "
+            intro = f"En {_MENU_CATEGORY_LABELS.get(category, 'esa categoría')} tenemos: "
             response = intro + ", ".join(names) + ". ¿Qué te provoca?"
         return await self._finish(state, response, "menu.inquiry", [], tool_calls, None)
 
