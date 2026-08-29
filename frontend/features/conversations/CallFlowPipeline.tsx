@@ -5,6 +5,7 @@ import {
   CircleDashed,
   ClipboardList,
   Database,
+  GitBranch,
   MapPin,
   PhoneCall,
   PhoneOff,
@@ -18,25 +19,13 @@ import {
 import type { ComponentType } from "react";
 import { HudPanel } from "@/components/HudPanel";
 import {
-  CALL_STAGE_LABEL,
   callStage,
   formatCurrency,
   fulfillmentLabel,
+  intentLabel,
   paymentMethodLabel,
-  type CallStageKey,
 } from "@/lib/format";
 import type { OrderOut } from "@/lib/types";
-
-const STEP_KEYS: CallStageKey[] = ["connected", "choosing", "details", "confirming", "confirmed"];
-
-const STEP_ICON: Record<CallStageKey, ComponentType<{ size?: number; className?: string }>> = {
-  connected: PhoneCall,
-  choosing: ShoppingCart,
-  details: ClipboardList,
-  confirming: ShieldCheck,
-  confirmed: CheckCircle2,
-  ended: PhoneOff,
-};
 
 const DETAIL_COPY: Record<string, { label: string; waiting: string }> = {
   collecting: {
@@ -73,18 +62,35 @@ const DETAIL_STEPS = [
   { key: "awaiting_confirmation", label: "Confirmacion", icon: ShieldCheck },
 ];
 
-interface FlowNode {
+// Geometria fija del grafo tipo n8n: 4 nodos en linea + una bifurcacion final
+// (como el nodo "If" del workflow) hacia "pedido creado" (si) o "cierre sin
+// pedido" (no). Coordenadas fijas -> el SVG de conectores no necesita medir
+// el DOM, igual que el min-width fijo que ya usaba este panel antes.
+const VIEW_W = 1180;
+const VIEW_H = 340;
+const NODE = 68; // lado del cuadro-icono, como los nodos de n8n
+const HALF = NODE / 2;
+const ROW_Y = 150;
+const BRANCH_TOP_Y = 55;
+const BRANCH_BOTTOM_Y = 245;
+const CENTERS = { n1: 110, n2: 340, n3: 570, n4: 800, n5: 1030 };
+
+interface GraphNode {
   key: string;
+  cx: number;
+  cy: number;
   title: string;
   subtitle: string;
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
 /**
- * Flujo grafico en tiempo real de una conversacion: en que etapa real esta
- * (segun el backend, no adivinado) -- conectada, eligiendo productos,
- * completando datos, confirmando, o cerrada. Vive en la pagina de detalle
- * de la llamada, refrescada por LiveRefresher mientras siga activa.
+ * Flujo grafico en tiempo real de una conversacion, estilo grafo de nodos
+ * (n8n): cada paso real del backend (status + detail_status, nunca
+ * adivinado) es un nodo con icono, conectado por lineas curvas con la señal
+ * "viajando" mientras la llamada sigue en curso. El ultimo nodo se bifurca
+ * en dos salidas posibles -- pedido confirmado o cierre sin pedido -- igual
+ * que un nodo de decision, y solo una de las dos se marca como recorrida.
  */
 export function CallFlowPipeline({
   status,
@@ -92,60 +98,97 @@ export function CallFlowPipeline({
   outcome,
   order,
   customerName,
+  channel,
 }: {
   status: string;
   detailStatus: string | null;
   outcome: string | null;
   order?: OrderOut | null;
   customerName?: string | null;
+  channel?: string | null;
 }) {
   const stage = callStage({ status, detail_status: detailStatus, outcome });
   const isEnded = stage.key === "ended";
   const isLive = status !== "closed";
   const liveCopy = detailStatus ? DETAIL_COPY[detailStatus] : null;
-  const finalTitle = isEnded ? "Cierre sin pedido" : isLive ? "Crear orden" : "Pedido creado";
-  const finalSubtitle = isEnded
-    ? "Derivado, cancelado o sin confirmacion"
-    : isLive
-      ? "Se activa cuando el cliente confirma"
-      : "Orden registrada en sistema";
   const currentIndex = stage.index;
   const itemsCount = order?.items.reduce((sum, item) => sum + item.quantity, 0) ?? 0;
   const payment = order?.payment_method ? paymentMethodLabel(order.payment_method) : null;
   const fulfillment = order?.fulfillment_type ? fulfillmentLabel(order.fulfillment_type) : null;
 
-  const flowNodes: FlowNode[] = [
+  const finalReached = currentIndex >= 4;
+  const successTaken = finalReached && !isEnded;
+  const failureTaken = finalReached && isEnded;
+
+  const nodes: GraphNode[] = [
     {
-      key: "connected",
+      key: "n1",
+      cx: CENTERS.n1,
+      cy: ROW_Y,
       title: "Entrada",
-      subtitle: "Canal abierto y cliente identificado",
+      subtitle: channel ? channel.toUpperCase() : "ENTRANTE",
       icon: PhoneCall,
     },
     {
-      key: "choosing",
+      key: "n2",
+      cx: CENTERS.n2,
+      cy: ROW_Y,
       title: "Pedido",
-      subtitle: "Productos, cantidades y cambios",
+      subtitle: "parser de items",
       icon: ShoppingCart,
     },
     {
-      key: "details",
+      key: "n3",
+      cx: CENTERS.n3,
+      cy: ROW_Y,
       title: "Datos",
-      subtitle: "Nombre, entrega, direccion y pago",
+      subtitle: "nombre · entrega · pago",
       icon: ClipboardList,
     },
     {
-      key: "confirming",
-      title: "Validacion",
-      subtitle: "Resumen final antes de crear orden",
-      icon: ShieldCheck,
-    },
-    {
-      key: "final",
-      title: finalTitle,
-      subtitle: finalSubtitle,
-      icon: isEnded ? PhoneOff : CheckCircle2,
+      key: "n4",
+      cx: CENTERS.n4,
+      cy: ROW_Y,
+      title: "Validación",
+      subtitle: "¿pedido confirmado?",
+      icon: GitBranch,
     },
   ];
+
+  const successNode: GraphNode = {
+    key: "n5a",
+    cx: CENTERS.n5,
+    cy: BRANCH_TOP_Y,
+    title: "Pedido creado",
+    subtitle: "order.confirm",
+    icon: CheckCircle2,
+  };
+  const failureNode: GraphNode = {
+    key: "n5b",
+    cx: CENTERS.n5,
+    cy: BRANCH_BOTTOM_Y,
+    title: "Cierre sin pedido",
+    subtitle: outcome && outcome !== "order.confirm" ? intentLabel(outcome) : "sin confirmar",
+    icon: PhoneOff,
+  };
+
+  // i = indice del nodo de origen (0..2) -> conecta nodes[i] con nodes[i+1]
+  const mainEdges = [0, 1, 2].map((i) => {
+    const from = nodes[i]!;
+    const to = nodes[i + 1]!;
+    const traveled = i + 1 <= currentIndex;
+    const flowing = isLive && i === currentIndex - 1;
+    return {
+      key: `edge-${i}`,
+      d: `M${from.cx + HALF},${from.cy} L${to.cx - HALF},${to.cy}`,
+      traveled,
+      flowing,
+    };
+  });
+
+  const toSuccess = `M${CENTERS.n4 + HALF},${ROW_Y} C ${CENTERS.n4 + 116},${ROW_Y} ${CENTERS.n5 - 116},${BRANCH_TOP_Y} ${CENTERS.n5 - HALF},${BRANCH_TOP_Y}`;
+  const toFailure = `M${CENTERS.n4 + HALF},${ROW_Y} C ${CENTERS.n4 + 116},${ROW_Y} ${CENTERS.n5 - 116},${BRANCH_BOTTOM_Y} ${CENTERS.n5 - HALF},${BRANCH_BOTTOM_Y}`;
+  const branchFlowing = isLive && currentIndex === 3;
 
   return (
     <HudPanel className="overflow-hidden p-5" glow={isLive}>
@@ -163,7 +206,7 @@ export function CallFlowPipeline({
           </div>
           <h2 className="mt-2 text-xl font-semibold text-white">Ruta operativa del cliente</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Cada nodo representa una decision del agente; el nodo activo se ilumina mientras la llamada sigue abierta.
+            Cada nodo es una decision real del agente; la señal viaja por el conector activo mientras la llamada sigue abierta.
           </p>
         </div>
         {isLive ? (
@@ -182,111 +225,98 @@ export function CallFlowPipeline({
       </div>
 
       <div className="relative grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_310px]">
-        <div className="relative overflow-x-auto pb-1">
-          <div className="grid min-w-[880px] grid-cols-[1fr_38px_1fr_38px_1fr_38px_1fr_38px_1fr] items-stretch">
-            {flowNodes.map((node, index) => {
-              const Icon = node.icon;
-              const isLast = index === flowNodes.length - 1;
-              const reached = index <= currentIndex;
-              const isCurrent = index === currentIndex && !isEnded;
-              const badge = isCurrent ? (isLive ? "Ahora" : "Final") : null;
-              const isTerminalFailure = isEnded && isLast;
+        <div className="relative overflow-x-auto rounded-lg border border-surface-800/80 bg-[radial-gradient(circle,rgba(77,216,240,0.06)_1px,transparent_1px)] bg-[length:22px_22px] pb-1">
+          <div className="relative" style={{ width: VIEW_W, height: VIEW_H }}>
+            <svg
+              viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+              width={VIEW_W}
+              height={VIEW_H}
+              className="absolute inset-0"
+              aria-hidden
+            >
+              {mainEdges.map((edge) => (
+                <g key={edge.key}>
+                  <path
+                    d={edge.d}
+                    fill="none"
+                    stroke={edge.traveled ? "#4dd8f0" : "#252b3b"}
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                    className={edge.flowing ? "hud-flow-edge-active" : ""}
+                    opacity={edge.traveled ? 0.9 : 0.7}
+                  />
+                </g>
+              ))}
 
-              return (
-                <div key={node.key} className="contents">
-                  <div
-                    className={[
-                      "relative min-h-[150px] border p-4 transition-all duration-500",
-                      "bg-surface-950/70",
-                      isTerminalFailure
-                        ? "border-accent-rose/45 shadow-[0_0_24px_-12px_rgba(244,102,124,0.65)]"
-                        : isCurrent
-                          ? "border-hud-400/70 shadow-hud"
-                          : reached
-                            ? "border-hud-500/25"
-                            : "border-surface-700",
-                    ].join(" ")}
-                  >
-                    <div className="absolute left-0 top-0 h-5 w-px bg-hud-400/60" />
-                    <div className="absolute left-0 top-0 h-px w-5 bg-hud-400/60" />
-                    <div className="absolute bottom-0 right-0 h-5 w-px bg-hud-400/40" />
-                    <div className="absolute bottom-0 right-0 h-px w-5 bg-hud-400/40" />
-                    {isCurrent && <div className="hud-scanline" />}
-                    <div className="relative flex h-full flex-col justify-between gap-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div
-                          className={[
-                            "flex h-11 w-11 items-center justify-center border",
-                            isTerminalFailure
-                              ? "border-accent-rose/40 bg-accent-rose/10 text-accent-rose"
-                              : isCurrent
-                                ? "border-hud-400/50 bg-hud-500/15 text-hud-300"
-                                : reached
-                                  ? "border-hud-500/25 bg-hud-500/10 text-hud-400"
-                                  : "border-surface-600 bg-surface-800 text-slate-600",
-                          ].join(" ")}
-                        >
-                          <Icon size={19} className={isCurrent ? "animate-pulse-slow" : ""} />
-                        </div>
-                        <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-slate-600">
-                          Nodo {String(index + 1).padStart(2, "0")}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-base font-semibold text-white">{node.title}</h3>
-                          {badge && (
-                            <span className="rounded border border-hud-500/30 bg-hud-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-hud-300">
-                              {badge}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-xs leading-relaxed text-slate-500">{node.subtitle}</p>
-                      </div>
-                    </div>
-                  </div>
+              <path
+                d={toSuccess}
+                fill="none"
+                stroke={successTaken ? "#2dd4bf" : "#252b3b"}
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                className={branchFlowing ? "hud-flow-edge-active" : ""}
+                opacity={successTaken ? 0.95 : 0.55}
+              />
+              <path
+                d={toFailure}
+                fill="none"
+                stroke={failureTaken ? "#f4667c" : "#252b3b"}
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                className={branchFlowing ? "hud-flow-edge-active" : ""}
+                opacity={failureTaken ? 0.95 : 0.55}
+              />
 
-                  {!isLast && (
-                    <div className="flex items-center justify-center">
-                      <div
-                        className={[
-                          "h-px w-full transition-colors duration-500",
-                          index < currentIndex ? "bg-hud-400/70" : "bg-surface-700",
-                        ].join(" ")}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+              {/* puertos: puntito en cada extremo de cada conector, como en n8n */}
+              {mainEdges.map((edge, i) => (
+                <g key={`ports-${edge.key}`}>
+                  <circle cx={nodes[i]!.cx + HALF} cy={nodes[i]!.cy} r={3} fill={edge.traveled ? "#4dd8f0" : "#343c52"} />
+                  <circle
+                    cx={nodes[i + 1]!.cx - HALF}
+                    cy={nodes[i + 1]!.cy}
+                    r={3}
+                    fill={edge.traveled ? "#4dd8f0" : "#343c52"}
+                  />
+                </g>
+              ))}
+              <circle cx={CENTERS.n4 + HALF} cy={ROW_Y} r={3} fill="#4dd8f0" />
+              <circle cx={CENTERS.n5 - HALF} cy={BRANCH_TOP_Y} r={3} fill={successTaken ? "#2dd4bf" : "#343c52"} />
+              <circle cx={CENTERS.n5 - HALF} cy={BRANCH_BOTTOM_Y} r={3} fill={failureTaken ? "#f4667c" : "#343c52"} />
 
-          <div className="mt-4 grid min-w-[880px] grid-cols-5 gap-2">
-            {STEP_KEYS.map((key, index) => {
-              const reached = index <= currentIndex;
-              const isCurrent = index === currentIndex && !isEnded;
-              const Icon = key === "confirmed" && isEnded ? STEP_ICON.ended : STEP_ICON[key];
-              const label = key === "confirmed" && isEnded ? CALL_STAGE_LABEL.ended : CALL_STAGE_LABEL[key];
+              <text
+                x={(CENTERS.n4 + CENTERS.n5) / 2 + 10}
+                y={BRANCH_TOP_Y - 12}
+                textAnchor="middle"
+                className="font-mono"
+                fontSize={10}
+                fill={successTaken ? "#2dd4bf" : "#5b6478"}
+                letterSpacing={1.5}
+              >
+                SÍ
+              </text>
+              <text
+                x={(CENTERS.n4 + CENTERS.n5) / 2 + 10}
+                y={BRANCH_BOTTOM_Y + 20}
+                textAnchor="middle"
+                className="font-mono"
+                fontSize={10}
+                fill={failureTaken ? "#f4667c" : "#5b6478"}
+                letterSpacing={1.5}
+              >
+                NO
+              </text>
+            </svg>
 
-              return (
-                <div
-                  key={key}
-                  className={[
-                    "flex items-center gap-2 border px-3 py-2 text-xs",
-                    key === "confirmed" && isEnded
-                      ? "border-accent-rose/30 bg-accent-rose/10 text-accent-rose"
-                      : isCurrent
-                        ? "border-hud-400/50 bg-hud-500/10 text-hud-300"
-                        : reached
-                          ? "border-hud-500/20 bg-hud-500/[0.05] text-slate-300"
-                          : "border-surface-700 bg-surface-900/70 text-slate-600",
-                  ].join(" ")}
-                >
-                  <Icon size={14} />
-                  <span className="truncate">{label}</span>
-                </div>
-              );
-            })}
+            {nodes.map((node, index) => (
+              <FlowNodeCard
+                key={node.key}
+                node={node}
+                reached={index <= currentIndex}
+                current={index === currentIndex && !isEnded && isLive}
+              />
+            ))}
+            <FlowNodeCard node={successNode} reached={successTaken} current={false} tone="success" dim={finalReached && !successTaken} />
+            <FlowNodeCard node={failureNode} reached={failureTaken} current={false} tone="failure" dim={finalReached && !failureTaken} />
           </div>
         </div>
 
@@ -355,6 +385,61 @@ export function CallFlowPipeline({
         </aside>
       </div>
     </HudPanel>
+  );
+}
+
+function FlowNodeCard({
+  node,
+  reached,
+  current,
+  tone = "hud",
+  dim = false,
+}: {
+  node: GraphNode;
+  reached: boolean;
+  current: boolean;
+  tone?: "hud" | "success" | "failure";
+  dim?: boolean;
+}) {
+  const Icon = node.icon;
+  const toneClasses = dim
+    ? "border-surface-700 bg-surface-900/70 text-slate-600"
+    : tone === "success"
+      ? "border-accent-teal/60 bg-accent-teal/10 text-accent-teal shadow-[0_0_20px_-6px_rgba(45,212,191,0.55)]"
+      : tone === "failure"
+        ? "border-accent-rose/60 bg-accent-rose/10 text-accent-rose shadow-[0_0_20px_-6px_rgba(244,102,124,0.5)]"
+        : current
+          ? "border-hud-400/70 bg-hud-500/15 text-hud-300 shadow-hud"
+          : reached
+            ? "border-hud-500/40 bg-hud-500/10 text-hud-400"
+            : "border-surface-700 bg-surface-900/70 text-slate-600";
+
+  const labelWidth = 150;
+
+  return (
+    <div
+      className="absolute flex flex-col items-center"
+      style={{ left: node.cx - labelWidth / 2, top: node.cy - HALF, width: labelWidth }}
+    >
+      <div
+        className={`relative flex items-center justify-center rounded-2xl border transition-all duration-500 ${toneClasses}`}
+        style={{ width: NODE, height: NODE }}
+      >
+        {current && <span className="hud-scanline absolute inset-0 rounded-2xl" aria-hidden />}
+        <Icon size={26} className={current ? "animate-pulse-slow" : ""} />
+        {reached && !dim && (
+          <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-surface-950 bg-accent-teal text-surface-950">
+            <CheckCircle2 size={11} strokeWidth={3} />
+          </span>
+        )}
+      </div>
+      <p className={`mt-2 max-w-[150px] truncate text-center text-xs font-semibold ${dim ? "text-slate-600" : "text-white"}`}>
+        {node.title}
+      </p>
+      <p className="max-w-[150px] truncate text-center font-mono text-[10px] uppercase tracking-wide text-slate-600">
+        {node.subtitle}
+      </p>
+    </div>
   );
 }
 

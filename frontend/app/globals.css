@@ -202,3 +202,33 @@ body {
     transform: scale(1.25);
   }
 }
+
+/* Notificacion de "llamada entrante": entra deslizandose desde el borde. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.hud-toast-in {
+  animation: toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Conector "n8n-style" del flujo de llamada: la señal viaja por el edge
+   activo como puntos animados, igual que la ejecucion en vivo de un
+   workflow. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.hud-flow-edge-active {
+  stroke-dasharray: 5 7;
+  animation: flow-dash 0.7s linear infinite;
+}

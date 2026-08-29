@@ -68,6 +68,7 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
           outcome={convo.outcome}
           order={convo.order}
           customerName={convo.customer_name}
+          channel={convo.channel}
         />
       </div>
 

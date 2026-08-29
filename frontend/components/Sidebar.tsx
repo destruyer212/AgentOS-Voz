@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ComponentType } from "react";
+import { useActiveCalls } from "./ActiveCallsProvider";
 
 interface NavItem {
   href: string;
@@ -34,6 +35,8 @@ const NAV_ITEMS: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { activeCalls } = useActiveCalls();
+  const liveCount = activeCalls.length;
 
   return (
     <aside className="relative z-20 flex h-full w-64 shrink-0 flex-col border-r border-hud-500/20 bg-surface-950/85 backdrop-blur-xl">
@@ -75,7 +78,16 @@ export function Sidebar() {
                 size={17}
                 className={active ? "text-hud-300" : "text-slate-500 group-hover:text-hud-300"}
               />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.href === "/llamadas" && liveCount > 0 && (
+                <span className="flex items-center gap-1 rounded-full border border-hud-400/50 bg-hud-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-hud-300">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-hud-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-hud-400" />
+                  </span>
+                  {liveCount}
+                </span>
+              )}
             </Link>
           );
         })}
