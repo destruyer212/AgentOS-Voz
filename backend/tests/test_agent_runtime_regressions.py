@@ -806,3 +806,63 @@ async def test_product_search_does_not_match_word_hidden_mid_word():
         names = [p.name for _, p in cola_results]
         assert any("Coca-Cola" in name for name in names)
         assert not any("Chocolate" in name for name in names)
+
+
+@pytest.mark.asyncio
+async def test_rule_based_parser_does_not_mangle_yape_via_y_prefix():
+    # Bug real, visto en vivo: el prefijo "y " (la palabra completa "y",
+    # para frases como "una hamburguesa Y una coca cola") perdia su
+    # espacio final al normalizarse, quedando en solo "y" -- eso calzaba
+    # contra CUALQUIER palabra que empezara con "y", incluido "Yape" (el
+    # metodo de pago). "Yape, yape." perdia las 2 primeras letras de cada
+    # "Yape" y quedaba "pe", que se procesaba como si fuera un producto
+    # nuevo -- duplicando la cantidad de un item ya en el pedido.
+    provider = RuleBasedProvider()
+
+    parsed = await provider.parse_message("Yape, yape.", awaiting_confirmation=False)
+    assert [item.query for item in parsed.items] == ["Yape", "yape"]
+
+    # El caso que este prefijo SI debe seguir resolviendo bien:
+    parsed_y = await provider.parse_message(
+        "quiero una hamburguesa y una coca cola", awaiting_confirmation=False
+    )
+    assert [item.query for item in parsed_y.items] == ["hamburguesa", "coca cola"]
+
+
+@pytest.mark.asyncio
+async def test_yape_answer_does_not_double_pending_order_quantity():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Quiero una hamburguesa vegetariana",
+                "Carlos",
+                "delivery",
+                "Calle Falsa 123",
+            ):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Yape, yape.", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.quantity for item in state.items] == [1]
+            assert "1 Hamburguesa Vegetariana" in turn.response
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_rule_based_parser_ignores_pure_filler_clause():
+    # Bug real, visto en vivo: "¿Me da una hamburguesa vegetariana, por
+    # favor?" separaba por comas y dejaba "por favor" como su propio
+    # chunk -- "favor" sobrevive tokenize() (no es stopword) asi que se
+    # buscaba como producto, perdiendo ademas el item real pedido en el
+    # mismo mensaje.
+    provider = RuleBasedProvider()
+
+    parsed = await provider.parse_message(
+        "Me da una hamburguesa vegetariana, por favor?", awaiting_confirmation=False
+    )
+    assert [item.query for item in parsed.items] == ["hamburguesa vegetariana"]

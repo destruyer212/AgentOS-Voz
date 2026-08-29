@@ -117,8 +117,8 @@ _PRODUCT_SEQUENCE_PATTERNS = [
     )
 ]
 _PRODUCT_SEQUENCE_FILLER_WORDS = {
-    "ademas", "aparte", "con", "mas", "por", "favor", "tambien", "una", "un",
-    "uno", "y",
+    "ademas", "aparte", "con", "mas", "por", "favor", "porfa", "porfavor",
+    "gracias", "obviamente", "tambien", "una", "un", "uno", "y",
     *_QTY_ALTERNATION.split("|"),
 }
 
@@ -175,11 +175,28 @@ def _extract_note(text: str) -> tuple[str, str | None]:
     return cleaned, "; ".join(notes) if notes else None
 
 
+def _normalize_prefix(prefix: str) -> str:
+    """normalize_text() hace .strip() al final, asi que un prefijo como
+    "y " (la palabra completa "y", para frases como "una hamburguesa Y una
+    coca cola") perdia su espacio final y quedaba en "y" solo -- eso lo
+    convertia en un prefijo de UNA letra que calzaba contra CUALQUIER
+    palabra que simplemente empezara con "y" ("Yape", el metodo de pago).
+    Bug real, visto en vivo: "Yape, yape." perdia las 2 primeras letras de
+    cada "Yape" (len("y ") == 2) y quedaba "pe", que se buscaba como si
+    fuera un producto -- ademas de perder el metodo de pago, el camino de
+    busqueda de items se disparaba igual sobre un pedido ya armado,
+    duplicando cantidades por error. Se reconstruye el espacio final a
+    mano para no perder ese limite de palabra."""
+    normalized = normalize_text(prefix)
+    if prefix.endswith(" ") and not normalized.endswith(" "):
+        normalized += " "
+    return normalized
+
+
 def _strip_known_prefix(chunk: str, prefixes: tuple[str, ...]) -> tuple[str, bool]:
     lowered = normalize_text(chunk)
     for prefix in prefixes:
-        normalized_prefix = normalize_text(prefix)
-        if lowered.startswith(normalized_prefix):
+        if lowered.startswith(_normalize_prefix(prefix)):
             return chunk[len(prefix):].strip(), True
     return chunk, False
 
@@ -348,6 +365,16 @@ def _parse_items(text: str) -> list[ParsedItem]:
             continue
         if rest and not tokenize(rest):
             continue
+        if rest and _gap_is_only_product_sequence_filler(rest):
+            # Bug real, visto en vivo: "¿Me da una hamburguesa vegetariana,
+            # por favor?" -- al separar por comas, la clausula "por favor"
+            # quedaba como su propio chunk. No tiene ningun 0-2 caracteres
+            # raros (pasaba el chequeo de arriba) y "favor" sobrevive a
+            # tokenize() (no es un stopword), asi que se buscaba como
+            # producto -- perdiendo ademas el item real que si se dijo en
+            # el mismo mensaje. Relleno puro ("por favor", "porfa",
+            # "gracias"...) nunca es un producto.
+            continue
 
         if not rest and note and items:
             # Modificador suelto ("una sin cebolla"): se pega al item anterior
@@ -403,7 +430,7 @@ def _split_off_order_after_menu_question(text: str) -> str | None:
     order_text = ", ".join(kept)
     has_quantity = re.search(QTY_PATTERN, order_text, re.IGNORECASE)
     has_action_prefix = any(
-        normalize_text(order_text).startswith(normalize_text(prefix))
+        normalize_text(order_text).startswith(_normalize_prefix(prefix))
         for prefix in _ADD_PREFIXES + _EDIT_PREFIXES
     )
     if not has_quantity and not has_action_prefix:
