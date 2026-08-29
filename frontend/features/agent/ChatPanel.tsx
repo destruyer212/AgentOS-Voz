@@ -1,9 +1,10 @@
 "use client";
 
-import { Bot, RotateCcw, Send, User } from "lucide-react";
+import { RotateCcw, Send, User } from "lucide-react";
 import { useRef, useState, useTransition, type FormEvent } from "react";
 import { sendAgentTurnAction } from "@/app/agente/actions";
 import { Pill } from "@/components/Badge";
+import { NeonVoiceCore } from "@/components/NeonVoiceCore";
 import { Spinner } from "@/components/Spinner";
 import { intentLabel } from "@/lib/format";
 import type { AgentTurnOut } from "@/lib/types";
@@ -103,12 +104,10 @@ export function ChatPanel() {
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_340px]">
-      <div className="flex h-[calc(100vh-13rem)] min-h-[420px] flex-col rounded-xl border border-surface-700 bg-surface-900">
+      <div className="flex h-[calc(100vh-13rem)] min-h-[420px] flex-col border border-hud-500/20 bg-surface-900/80 shadow-hud">
         <div className="flex items-center justify-between border-b border-surface-700 px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/15 text-brand-400">
-              <Bot size={15} />
-            </span>
+            <NeonVoiceCore size="sm" label="Sofia agente de voz" className="-m-5 shrink-0 scale-[0.46]" />
             <div>
               <p className="text-sm font-medium text-slate-200">Sofía · Agente del restaurante</p>
               <p className="text-xs text-slate-500">
@@ -128,7 +127,7 @@ export function ChatPanel() {
         <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              <Bot size={28} className="mb-3 text-slate-600" />
+              <NeonVoiceCore size="md" label="Agente listo para recibir una llamada" className="mb-1" />
               <p className="max-w-xs text-sm text-slate-400">
                 Escribe como si fueras un cliente llamando al restaurante.
               </p>

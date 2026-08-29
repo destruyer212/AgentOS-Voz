@@ -16,10 +16,11 @@ export const metadata: Metadata = { title: "Llamada" };
 
 export default async function LlamadaDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const conversationId = safeDecodeRouteParam(id);
 
   let convo;
   try {
-    convo = await api.conversations.get(id);
+    convo = await api.conversations.get(conversationId);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
     const message = err instanceof ApiError ? err.message : "Error desconocido.";
@@ -61,7 +62,13 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
       </div>
 
       <div className="mb-6">
-        <CallFlowPipeline status={convo.status} detailStatus={convo.detail_status} outcome={convo.outcome} />
+        <CallFlowPipeline
+          status={convo.status}
+          detailStatus={convo.detail_status}
+          outcome={convo.outcome}
+          order={convo.order}
+          customerName={convo.customer_name}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
@@ -70,7 +77,7 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
         </HudPanel>
 
         <div className="space-y-4">
-          <div className="rounded-xl border border-surface-700 bg-surface-900 p-4">
+          <div className="border border-surface-700 bg-surface-900 p-4">
             <p className="mb-2.5 text-xs font-medium uppercase tracking-wide text-slate-500">Detalle</p>
             <dl className="space-y-2 text-sm">
               <div className="flex items-center justify-between">
@@ -91,7 +98,7 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
           {convo.order ? (
             <OrderSummaryCard order={convo.order} />
           ) : (
-            <div className="rounded-xl border border-dashed border-surface-600 p-4 text-center text-sm text-slate-500">
+            <div className="border border-dashed border-surface-600 p-4 text-center text-sm text-slate-500">
               {isActive ? "Todavía no se confirmó un pedido." : "Esta conversación no generó un pedido."}
             </div>
           )}
@@ -99,6 +106,14 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
       </div>
     </div>
   );
+}
+
+function safeDecodeRouteParam(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function BackLink() {

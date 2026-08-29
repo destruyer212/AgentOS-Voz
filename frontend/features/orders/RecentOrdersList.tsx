@@ -19,9 +19,17 @@ export function RecentOrdersList({ orders }: { orders: OrderOut[] }) {
   }
 
   return (
-    <div className="divide-y divide-surface-800 rounded-xl border border-surface-700 bg-surface-900">
+    <div className="overflow-hidden border border-hud-500/20 bg-surface-900/65 shadow-panel backdrop-blur-md">
+      <div className="grid grid-cols-[1fr_110px_96px] border-b border-surface-700/80 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">
+        <span>Pedido</span>
+        <span>Estado</span>
+        <span className="text-right">Total</span>
+      </div>
       {orders.map((order) => (
-        <div key={order.id} className="flex items-center justify-between gap-3 px-4 py-3">
+        <div
+          key={order.id}
+          className="grid grid-cols-[1fr_110px_96px] items-center gap-3 border-b border-surface-800/70 px-4 py-3 last:border-b-0 hover:bg-hud-500/[0.04]"
+        >
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-slate-200">
               #{order.id} · {order.customer_name ?? "Sin registrar"}
@@ -30,12 +38,8 @@ export function RecentOrdersList({ orders }: { orders: OrderOut[] }) {
               {order.items.map((item) => `${item.quantity}× ${item.product_name}`).join(", ")}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <OrderStatusBadge status={order.status} />
-            <span className="w-16 text-right text-sm font-semibold text-slate-200">
-              {formatCurrency(order.total)}
-            </span>
-          </div>
+          <OrderStatusBadge status={order.status} />
+          <span className="text-right font-mono text-sm font-semibold text-slate-200">{formatCurrency(order.total)}</span>
         </div>
       ))}
     </div>

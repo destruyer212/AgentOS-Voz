@@ -81,6 +81,34 @@ body {
   animation: radar-sweep 11s linear infinite;
 }
 
+.neon-core-float {
+  transform-origin: 120px 120px;
+  animation: neon-float 7s ease-in-out infinite;
+}
+
+.neon-core-line {
+  stroke-dasharray: 96 34 52 28;
+  transform-origin: 120px 120px;
+  mix-blend-mode: screen;
+}
+
+.neon-core-line-a {
+  animation: neon-dash 3.4s linear infinite, neon-turn-a 12s ease-in-out infinite;
+}
+
+.neon-core-line-b {
+  animation: neon-dash-reverse 4.1s linear infinite, neon-turn-b 10s ease-in-out infinite;
+}
+
+.neon-core-line-c {
+  animation: neon-dash 5.2s linear infinite, neon-turn-c 14s ease-in-out infinite;
+}
+
+.neon-core-pulse {
+  filter: drop-shadow(0 0 12px rgba(139, 233, 253, 0.85));
+  animation: neon-pulse 1.8s ease-in-out infinite;
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -108,5 +136,69 @@ body {
 @keyframes radar-sweep {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes neon-dash {
+  to {
+    stroke-dashoffset: -210;
+  }
+}
+
+@keyframes neon-dash-reverse {
+  to {
+    stroke-dashoffset: 210;
+  }
+}
+
+@keyframes neon-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.035);
+  }
+}
+
+@keyframes neon-turn-a {
+  0%,
+  100% {
+    transform: rotate(0deg) scaleX(1);
+  }
+  50% {
+    transform: rotate(12deg) scaleX(0.92);
+  }
+}
+
+@keyframes neon-turn-b {
+  0%,
+  100% {
+    transform: rotate(-8deg) scaleY(1);
+  }
+  50% {
+    transform: rotate(18deg) scaleY(0.9);
+  }
+}
+
+@keyframes neon-turn-c {
+  0%,
+  100% {
+    transform: rotate(10deg) scale(0.96);
+  }
+  50% {
+    transform: rotate(-16deg) scale(1.04);
+  }
+}
+
+@keyframes neon-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.25);
   }
 }

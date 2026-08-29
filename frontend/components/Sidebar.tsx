@@ -9,6 +9,7 @@ import {
   Phone,
   SignalHigh,
   ScrollText,
+  Store,
   UtensilsCrossed,
   Users,
 } from "lucide-react";
@@ -27,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/pedidos", label: "Pedidos", icon: ClipboardList },
   { href: "/productos", label: "Productos", icon: UtensilsCrossed },
   { href: "/clientes", label: "Clientes", icon: Users },
+  { href: "/negocio", label: "Negocio", icon: Store },
   { href: "/auditoria", label: "Auditoría", icon: ScrollText },
 ];
 
