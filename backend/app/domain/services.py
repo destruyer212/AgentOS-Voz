@@ -11,7 +11,14 @@ from app.domain.models import (
     OrderItem,
     Product,
 )
-from app.domain.schemas import CustomerCreate, OrderCreate, OrderItemOut, OrderOut, ProductOut
+from app.domain.schemas import (
+    CustomerCreate,
+    CustomerUpdate,
+    OrderCreate,
+    OrderItemOut,
+    OrderOut,
+    ProductOut,
+)
 from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
 
 _PRODUCT_QUERY_ALIASES = {
@@ -27,6 +34,12 @@ _PRODUCT_QUERY_ALIASES = {
 
 class DomainError(Exception):
     pass
+
+
+_VALID_ORDER_STATUSES = {
+    "draft", "pending_confirmation", "confirmed", "preparing", "ready",
+    "scheduled", "delivered", "cancelled", "failed",
+}
 
 
 def _canonical_product_query(query: str) -> str:
@@ -158,6 +171,51 @@ class CustomerService:
         customer = await self.session.get(Customer, customer_id)
         if customer and customer.tenant_id == self.tenant_id:
             customer.address = address
+
+    async def update(self, customer_id: int, data: "CustomerUpdate") -> Customer:
+        customer = await self.session.get(Customer, customer_id)
+        if not customer or customer.tenant_id != self.tenant_id:
+            raise DomainError("Cliente no encontrado.")
+        fields = data.model_dump(exclude_unset=True)
+        if "name" in fields and not (fields["name"] or "").strip():
+            raise DomainError("El nombre no puede quedar vacío.")
+        for key, value in fields.items():
+            setattr(customer, key, value)
+        await self._audit("customer.updated", "Customer", str(customer.id), customer.name)
+        await self.session.commit()
+        return customer
+
+    async def delete(self, customer_id: int) -> None:
+        customer = await self.session.get(Customer, customer_id)
+        if not customer or customer.tenant_id != self.tenant_id:
+            raise DomainError("Cliente no encontrado.")
+
+        # No lo dejamos ir si tiene pedidos o conversaciones reales
+        # asociadas -- borrarlo ahi rompe la referencia (FK) y, peor,
+        # destruye historial de negocio real sin avisar. Mejor decir por
+        # que no se puede en vez de fallar con un error de base de datos
+        # crudo, o silenciosamente dejar huerfanos.
+        has_orders = await self.session.scalar(
+            select(Order.id).where(Order.tenant_id == self.tenant_id, Order.customer_id == customer_id).limit(1)
+        )
+        if has_orders:
+            raise DomainError(
+                "No se puede eliminar: este cliente tiene pedidos asociados. "
+                "Conserva el historial o contacta soporte para un borrado forzado."
+            )
+        has_conversations = await self.session.scalar(
+            select(Conversation.id)
+            .where(Conversation.tenant_id == self.tenant_id, Conversation.customer_id == customer_id)
+            .limit(1)
+        )
+        if has_conversations:
+            raise DomainError(
+                "No se puede eliminar: este cliente tiene conversaciones registradas."
+            )
+
+        await self._audit("customer.deleted", "Customer", str(customer.id), customer.name)
+        await self.session.delete(customer)
+        await self.session.commit()
 
     async def _audit(self, action: str, entity_type: str, entity_id: str, detail: str) -> None:
         self.session.add(
@@ -305,6 +363,29 @@ class OrderService:
         )
         await self.session.commit()
         return {"order_id": order.id, "status": order.status, "requested_time": order.requested_time}
+
+    async def update_status(self, order_id: int, status: str) -> OrderOut:
+        if status not in _VALID_ORDER_STATUSES:
+            raise DomainError(f"Estado de pedido invalido: {status}")
+        order = await self.session.scalar(
+            select(Order).where(Order.tenant_id == self.tenant_id, Order.id == order_id)
+        )
+        if not order:
+            raise DomainError("Pedido no encontrado.")
+        previous = order.status
+        order.status = status
+        self.session.add(
+            AuditLog(
+                tenant_id=self.tenant_id,
+                actor="admin",
+                action="order.status_changed",
+                entity_type="Order",
+                entity_id=str(order.id),
+                detail=f"{previous} -> {status}",
+            )
+        )
+        await self.session.commit()
+        return await self.get(order.id)
 
     async def get(self, order_id: int) -> OrderOut:
         order = await self.session.scalar(

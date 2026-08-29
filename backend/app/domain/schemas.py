@@ -24,6 +24,16 @@ class CustomerOut(CustomerCreate):
     id: int
 
 
+class CustomerUpdate(BaseModel):
+    # Todo opcional: PATCH solo toca lo que venga presente. name explicitamente
+    # puede venir vacio en el JSON (validado como "no vacio" en el endpoint,
+    # no aca) para no confundir "no lo mande" con "lo mande vacio".
+    name: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    notes: str | None = None
+
+
 class OrderItemIn(BaseModel):
     product_id: int
     quantity: int = Field(gt=0)
@@ -60,6 +70,10 @@ class OrderOut(BaseModel):
     payment_method: str | None = None
     total: float
     items: list[OrderItemOut]
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str
 
 
 class AgentMessageIn(BaseModel):

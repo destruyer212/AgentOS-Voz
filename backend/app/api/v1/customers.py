@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_tenant_id
-from app.domain.schemas import CustomerCreate, CustomerOut
-from app.domain.services import CustomerService
+from app.domain.schemas import CustomerCreate, CustomerOut, CustomerUpdate
+from app.domain.services import CustomerService, DomainError
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -34,3 +34,33 @@ async def create_customer(
         id=customer.id, name=customer.name, phone=customer.phone,
         address=customer.address, notes=customer.notes,
     )
+
+
+@router.patch("/{customer_id}", response_model=CustomerOut)
+async def update_customer(
+    customer_id: int,
+    payload: CustomerUpdate,
+    session: AsyncSession = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id),
+) -> CustomerOut:
+    try:
+        customer = await CustomerService(session, tenant_id).update(customer_id, payload)
+    except DomainError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CustomerOut(
+        id=customer.id, name=customer.name, phone=customer.phone,
+        address=customer.address, notes=customer.notes,
+    )
+
+
+@router.delete("/{customer_id}", status_code=204)
+async def delete_customer(
+    customer_id: int,
+    session: AsyncSession = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id),
+) -> None:
+    try:
+        await CustomerService(session, tenant_id).delete(customer_id)
+    except DomainError as exc:
+        status = 404 if "no encontrado" in str(exc).lower() else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
