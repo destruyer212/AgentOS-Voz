@@ -26,6 +26,7 @@ from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
 from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
+from app.infrastructure.config import settings
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
 from app.workflows.engine import WorkflowEngine
@@ -419,7 +420,7 @@ class AgentRuntime:
                     response = "Dime, ¿qué te provoca pedir hoy?"
             else:
                 response = (
-                    "Hola, buenas. ¿Qué te provoca pedir hoy?"
+                    f"Hola, buenas, bienvenido a {settings.restaurant_name}. ¿Qué te provoca pedir hoy?"
                     if not state.items and not state.transcript[:-1]
                     else "Perdón, no te entendí bien. ¿Me lo repites?"
                 )

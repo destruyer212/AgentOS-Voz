@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = "sqlite+aiosqlite:///./agentos.db"
     default_tenant_id: str = "tenant_demo"
+    # Nombre del restaurante que el agente dice en el saludo (telefono y
+    # web). Configurable por .env para no tener que tocar codigo cuando
+    # cambie el negocio -- ver voice_agent_bridge.py y agents/runtime.py.
+    restaurant_name: str = "El Olivar Grill"
     llm_provider: str = "rule_based"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"

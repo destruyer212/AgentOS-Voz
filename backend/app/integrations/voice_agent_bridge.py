@@ -74,7 +74,7 @@ _SPEAK_MODEL = "aura-2-celeste-es"
 # sesgar la deteccion -- no probado todavia, quedaria para una sesion
 # dedicada a validarlo antes de ponerlo en una llamada real de nuevo.
 _LISTEN_MODEL = "nova-3"
-_GREETING = "Hola, buenas. ¿Qué te provoca pedir hoy?"
+_GREETING = f"Hola, buenas, bienvenido a {settings.restaurant_name}. ¿Qué te provoca pedir hoy?"
 
 
 def _log_deepgram_event(event: dict[str, Any], call_control_id: str) -> None:
