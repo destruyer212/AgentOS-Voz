@@ -6,9 +6,27 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_tenant_id
+from app.domain.business_hours import current_business_status
 from app.domain.models import AuditLog, VoiceTurnMetric, WorkflowRun
+from app.infrastructure.config import settings
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+
+@router.get("/business-info")
+async def business_info() -> dict:
+    """Nombre y horario real del negocio -- el mismo dato que usa el agente
+    para responder "atienden hoy?" por telefono/chat, expuesto para que el
+    panel muestre exactamente lo mismo (nunca dos fuentes de verdad
+    distintas para lo mismo)."""
+    status = current_business_status()
+    return {
+        "restaurant_name": settings.restaurant_name,
+        "day_name": status.day_name,
+        "is_open": status.is_open,
+        "open_time": status.open_time,
+        "close_time": status.close_time,
+    }
 
 
 def _percentile(sorted_values: list[int], pct: float) -> int:

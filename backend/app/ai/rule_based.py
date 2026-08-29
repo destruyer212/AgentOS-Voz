@@ -244,6 +244,27 @@ def is_audio_repair_message(text: str) -> bool:
     return "corta" in words and ("se" in words or "llamada" in words)
 
 
+_HOURS_INQUIRY_PHRASES = (
+    "hasta que hora", "hasta que ora", "a que hora abren", "a que hora cierran",
+    "a que hora atienden", "que horario tienen", "cual es su horario",
+    "estan abiertos", "estan atendiendo", "siguen atendiendo", "siguen abiertos",
+    "atienden hoy", "abren hoy", "horario de atencion",
+)
+
+
+def is_hours_inquiry(text: str) -> bool:
+    """"¿Atienden hoy?", "¿hasta que hora abren?" -- no es un pedido, es una
+    pregunta sobre horario. El runtime la responde con la hora real del
+    servidor (ver app/domain/business_hours.py), nunca inventada."""
+    lowered = normalize_text(_strip_leading_smalltalk(text))
+    if any(phrase in lowered for phrase in _HOURS_INQUIRY_PHRASES):
+        return True
+    words = set(lowered.split())
+    if "horario" in words or "horarios" in words:
+        return True
+    return bool(words & {"abren", "abierto", "abiertos", "cierran", "atienden", "atendiendo"})
+
+
 def _looks_like_modifier_phrase(text: str) -> bool:
     lowered = normalize_text(_strip_leading_articles(text))
     tokens = set(lowered.split())

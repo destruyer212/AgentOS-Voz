@@ -18,6 +18,13 @@ dependencies = [
     "python-multipart>=0.0.9",
     "httpx>=0.27.0",
     "websockets>=15.0.0",
+    # zoneinfo (stdlib) necesita la base de datos IANA de zonas horarias --
+    # Linux normalmente ya la trae del sistema, pero Windows no, y no hay
+    # garantia de que CUALQUIER servidor la tenga instalada. tzdata la
+    # empaqueta en Python puro, funciona igual en los dos. Sin esto,
+    # ZoneInfo("America/Lima") tira ZoneInfoNotFoundError en Windows (bug
+    # real, encontrado probando el horario de atencion en local).
+    "tzdata>=2024.1",
 ]
 
 [tool.setuptools.packages.find]

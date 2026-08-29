@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     # web). Configurable por .env para no tener que tocar codigo cuando
     # cambie el negocio -- ver voice_agent_bridge.py y agents/runtime.py.
     restaurant_name: str = "El Olivar Grill"
+    # Horario real de atencion (ver app/domain/business_hours.py): todos los
+    # dias de 12:00 a 23:00 segun la carta publicada. Formato 24h "HH:MM".
+    business_hours_open: str = "12:00"
+    business_hours_close: str = "23:00"
+    business_timezone: str = "America/Lima"
     llm_provider: str = "rule_based"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"

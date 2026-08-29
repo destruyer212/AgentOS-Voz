@@ -963,3 +963,46 @@ async def test_pending_clarification_survives_a_fragment_that_does_not_resolve_i
             assert state.pending_clarification is not None
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_hours_inquiry_answers_with_real_time_not_nlu():
+    # "¿Atienden hoy?"/"¿hasta que hora abren?" tiene que responderse con la
+    # hora real del servidor (ver app/domain/business_hours.py), sin pasar
+    # por el parser de pedidos -- nunca debe salir "No encontré ... en el
+    # menú" para esto.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="¿Hasta qué hora atienden hoy?", conversation_id=conversation_id)
+            )
+            assert turn.intent == "hours.inquiry"
+            assert "no encontr" not in turn.response.lower()
+            assert "23:00" in turn.response or "12:00" in turn.response
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_hours_inquiry_mid_detail_collection_repeats_pending_question():
+    # Si te preguntan por el horario a mitad de dar los datos del pedido
+    # (ej. mientras se pide el metodo de pago), hay que responder Y repetir
+    # la pregunta pendiente -- no perder el hilo del pedido.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa vegetariana", "Carlos", "delivery", "Calle Falsa 123"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="¿Y hasta qué hora abren?", conversation_id=conversation_id)
+            )
+            assert turn.intent == "hours.inquiry"
+            assert "efectivo" in turn.response.lower()  # repite la pregunta de pago
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_payment"  # el pedido sigue donde estaba
+    finally:
+        reset(conversation_id)

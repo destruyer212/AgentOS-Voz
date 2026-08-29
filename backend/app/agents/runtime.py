@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.state import ConversationState, OrderLineDraft, get_or_create
 from app.ai.base import ParsedItem
 from app.ai.router import ai_router
-from app.ai.rule_based import CANCEL_WORDS, CONFIRM_WORDS, is_audio_repair_message
+from app.ai.rule_based import CANCEL_WORDS, CONFIRM_WORDS, is_audio_repair_message, is_hours_inquiry
+from app.domain.business_hours import business_hours_message
 from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
@@ -368,6 +369,18 @@ class AgentRuntime:
             await self._resolve_customer(state, payload)
 
         tool_calls: list[ToolCallOut] = []
+
+        # "¿Atienden hoy?"/"¿hasta que hora abren?" -- se chequea ANTES que
+        # todo lo demas (incluso antes de la recoleccion de datos) porque es
+        # una pregunta valida en cualquier momento de la llamada, y la
+        # respuesta depende de la hora REAL del servidor, no de NLU. Si
+        # habia una pregunta pendiente (nombre/entrega/direccion/pago), se
+        # repite despues de contestar para no perder el hilo del pedido.
+        if is_hours_inquiry(payload.message):
+            response = business_hours_message()
+            if state.status in _DETAIL_STATUSES:
+                response += f" {_DETAIL_PROMPTS[state.status[len('need_'):]]}"
+            return await self._finish(state, response, "hours.inquiry", [], tool_calls, None)
 
         # Sub-estados de recoleccion de datos (nombre/entrega/pago): no pasan
         # por el NLU de pedidos, se interpretan directo como respuesta a la
