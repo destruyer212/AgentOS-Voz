@@ -279,6 +279,7 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.payment_method = None
     state.silence_retries = 0
     state.pending_clarification = None
+    state.hangup_after_response = False
 
 
 class AgentRuntime:
@@ -434,6 +435,12 @@ class AgentRuntime:
                 return await self._finish(state, response, "order.confirm", [], tool_calls, None)
 
             state.status = "closed"
+            # Señal explicita para telefonia (ver voice_agent_bridge.py):
+            # colgar solo automaticamente cuando el pedido se confirmo de
+            # verdad. status=="closed" tambien se usa para handoff -- colgar
+            # ahi seria mucho peor que no colgar (cortarle la llamada a
+            # alguien que pidio hablar con una persona).
+            state.hangup_after_response = True
             time_part = f" para las {order.requested_time}" if order.requested_time else ""
             response = (
                 f"Listo, pedido confirmado{time_part}, son {_format_money_for_voice(order.total)}. "

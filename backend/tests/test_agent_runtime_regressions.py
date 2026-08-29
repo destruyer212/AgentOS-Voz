@@ -569,6 +569,32 @@ async def test_order_confirms_without_crashing_when_customer_has_no_phone():
             assert confirmed.status == "closed"
             assert confirmed.order is not None
             assert confirmed.order.customer_id is None
+
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.hangup_after_response is True
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_handoff_does_not_trigger_automatic_hangup():
+    # Bug real evitado antes de llegar a produccion: status=="closed" se usa
+    # tanto para "pedido confirmado" como para "transferido a un humano".
+    # Colgar la llamada automaticamente (ver voice_agent_bridge.py) justo
+    # cuando se le dice al cliente "te paso con alguien del equipo" seria
+    # mucho peor que no colgar nunca -- cortarle la llamada a alguien que
+    # pidio hablar con una persona.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="quiero hablar con un humano", conversation_id=conversation_id)
+            )
+            assert turn.intent == "handoff"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "closed"
+            assert state.hangup_after_response is False
     finally:
         reset(conversation_id)
 

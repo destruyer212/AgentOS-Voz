@@ -28,12 +28,30 @@ from fastapi import WebSocket
 
 from app.agents.state import peek
 from app.infrastructure.config import settings
+from app.integrations import telnyx_client as telnyx
 
 logger = logging.getLogger(__name__)
 
 _DEEPGRAM_VOICE_AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 _DEEPGRAM_SETUP_TIMEOUT_SECONDS = 12.0
 _DEEPGRAM_KEEPALIVE_SECONDS = 8.0
+# Respiro entre "Deepgram termino de generar el audio" (AgentAudioDone) y el
+# hangup real -- el audio todavia tiene que viajar Deepgram -> nuestro
+# puente -> Telnyx -> la red del que llama, asi que colgar en el instante
+# exacto de AgentAudioDone corta la ultima frase de despedida antes de que
+# termine de sonar del lado del cliente.
+_HANGUP_GRACE_SECONDS = 2.5
+
+
+async def _hangup_after_grace(call_control_id: str) -> None:
+    await asyncio.sleep(_HANGUP_GRACE_SECONDS)
+    try:
+        await telnyx.hangup(call_control_id)
+        logger.info("Voice Agent bridge: colgado automatico tras confirmar pedido call_control_id=%s", call_control_id)
+    except Exception:
+        # No es critico -- si falla, el que llama simplemente tiene que
+        # colgar el solo. Nunca debe tumbar el resto del puente.
+        logger.exception("Voice Agent bridge: fallo el colgado automatico call_control_id=%s", call_control_id)
 
 # Aura-2, "celeste" (colombiana). Se probo "selena" (region "Latin American"
 # generica) por sugerencia de la documentacion de Deepgram, pero en llamadas
@@ -322,8 +340,10 @@ async def bridge_call(telnyx_ws: WebSocket, call_control_id: str, customer_phone
                         # no tiene nada mas que hacer.
                         return
 
+            hangup_triggered = False
+
             async def deepgram_to_telnyx() -> None:
-                nonlocal first_outbound_at
+                nonlocal first_outbound_at, hangup_triggered
                 async for message in dg_ws:
                     if isinstance(message, bytes):
                         if first_outbound_at is None:
@@ -348,6 +368,26 @@ async def bridge_call(telnyx_ws: WebSocket, call_control_id: str, customer_phone
                         await telnyx_ws.send_text(json.dumps({"event": "clear"}))
                     else:
                         _log_deepgram_event(event, call_control_id)
+                        if event_type == "AgentAudioDone" and not hangup_triggered:
+                            # Bug real, reportado en vivo: tras confirmar el
+                            # pedido ("Listo, pedido confirmado... ¡Gracias!"),
+                            # la llamada se quedaba conectada indefinidamente
+                            # -- el flujo viejo de Call Control colgaba en
+                            # call.speak.ended si el estado quedaba "closed",
+                            # pero este puente nuevo nunca reproduce ese
+                            # evento (Deepgram maneja el audio por su cuenta),
+                            # asi que ese colgado automatico nunca se
+                            # disparaba. AgentAudioDone es la señal equivalente
+                            # aca: "termine de reproducir la respuesta de este
+                            # turno". Si en ese momento el pedido ya quedo
+                            # confirmado, colgamos -- pero solo la PRIMERA vez
+                            # (Deepgram puede mandar varios AgentAudioDone
+                            # seguidos si la respuesta salio en varios
+                            # fragmentos de TTS).
+                            state = peek(call_control_id)
+                            if state is not None and state.hangup_after_response:
+                                hangup_triggered = True
+                                asyncio.create_task(_hangup_after_grace(call_control_id))
 
             done, pending = await asyncio.wait(
                 [telnyx_task, asyncio.create_task(deepgram_to_telnyx()), asyncio.create_task(keepalive_loop())],
