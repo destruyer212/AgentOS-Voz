@@ -1025,3 +1025,77 @@ async def test_bare_confirm_word_outside_confirmation_is_not_a_product_search():
     parsed = await provider.parse_message("Sí.", awaiting_confirmation=True)
     assert parsed.intent == "order.confirm"
     assert parsed.confirms is True
+
+
+@pytest.mark.asyncio
+async def test_pending_clarification_resolves_even_when_followup_parses_as_order_create():
+    # Bug real, visto en vivo (llamada real, El Olivar Grill): tras
+    # preguntar "Cual hamburguesa prefieres: Clasica, Doble, BBQ,
+    # Vegetariana?", la respuesta del cliente ("Quiero la BBQ") parsea
+    # como order.create (empieza con "Quiero"), NO como una respuesta a
+    # la aclaracion -- eso saltaba la logica de desambiguacion, volvia a
+    # buscar "la BBQ" desde cero, no encontraba nada exacto y repetia LA
+    # MISMA pregunta con las 4 opciones otra vez, sin avanzar nunca.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            first = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero una hamburguesa", conversation_id=conversation_id, channel="web")
+            )
+            assert "prefieres" in first.response.lower()  # ambiguo, pregunto
+
+            second = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero la BBQ", conversation_id=conversation_id, channel="web")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["Hamburguesa BBQ"]
+            assert "prefieres" not in second.response.lower()  # NO debe repetir la pregunta
+            assert state.pending_clarification is None
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_spoken_fraction_words_resolve_against_numeric_catalog_names():
+    # Bug real, visto en vivo: el catalogo real de El Olivar guarda las
+    # fracciones en numero ("1/2 Pollo a la Brasa", "1/4 de Pollo a la
+    # Brasa"), pero el cliente las dice con palabras ("un cuarto de pollo
+    # a la brasa del menu"). Sin normalizar, esa frase nunca matcheaba
+    # NINGUNA opcion por nombre exacto y el agente repetia la pregunta de
+    # aclaracion con las 4 variantes una y otra vez, sin poder avanzar.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-POL-MED", "1/2 Pollo a la Brasa", 39.5),
+            ("TEST-POL-CUA", "1/4 de Pollo a la Brasa", 21.5),
+            ("TEST-POL-CUA-ANT", "1/4 de Pollo a la Brasa El Olivar + Anticucho", 28.0),
+            ("TEST-POL-MEN", "Menu 1/4 de Pollo a la Brasa", 21.0),
+        ):
+            product = Product(
+                tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="pollo_brasa"
+            )
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            # Sin normalizar, "un cuarto de pollo a la brasa" no matcheaba
+            # NADA por nombre exacto y caia en el listado ambiguo completo.
+            # Normalizado a "1/4 de pollo a la brasa", matchea EXACTO contra
+            # "1/4 de Pollo a la Brasa" -- ni siquiera hace falta preguntar.
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero un cuarto de pollo a la brasa", conversation_id=conversation_id, channel="web"
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["1/4 de Pollo a la Brasa"]
+            assert "prefieres" not in turn.response.lower()
+    finally:
+        reset(conversation_id)

@@ -27,6 +27,7 @@ from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
 from app.domain.text_utils import (
+    normalize_spoken_fractions,
     normalize_text,
     speakify_product_name,
     tokenize,
@@ -265,7 +266,9 @@ def _resolve_pending_clarification(state: ConversationState, message: str) -> di
     candidates = pending.get("options") or []
     if not candidates:
         return None
-    message_tokens = tokenize(message)
+    # "un cuarto"/"medio" (como lo dice el cliente) -> "1/4"/"1/2" (como
+    # esta el nombre en el catalogo) -- ver normalize_spoken_fractions.
+    message_tokens = tokenize(normalize_spoken_fractions(message))
     if not message_tokens:
         return None
     all_token_sets = [set(tokenize(c["name"])) for c in candidates]
@@ -656,6 +659,13 @@ class AgentRuntime:
         # ademas se preguntaba cual hamburguesa -- si el cliente contestaba
         # "BBQ" a esa pregunta, terminaba con dos hamburguesas BBQ cobradas.
         ambiguous_query_tokens: list[set[str]] = []
+        # Foto de como estaba ANTES de este turno -- el chequeo de mas
+        # abajo solo debe resolver contra una aclaracion que ya estaba
+        # pendiente de un turno anterior, nunca contra una que se genera
+        # recien en este mismo mensaje (eso es el caso "una hamburguesa,
+        # BBQ" de arriba, que ambiguous_query_tokens ya cubre distinto: ahi
+        # NO hay que resolver de una, hay que esperar la respuesta).
+        pending_clarification_before_turn = state.pending_clarification
 
         for item in parsed_items:
             action = item.action or "add"
@@ -678,6 +688,28 @@ class AgentRuntime:
                 elif action == "set":
                     existing.quantity = max(item.quantity, 1)
                 continue
+
+            # Bug real, visto en vivo: con una desambiguacion pendiente (ej.
+            # "¿Cual pollo a la brasa prefieres: medio, un cuarto, ...?"),
+            # la respuesta del cliente ("un cuarto de pollo a la brasa del
+            # menu") suele parsear como un pedido nuevo (order.create), no
+            # como una respuesta -- eso saltaba por completo la logica de
+            # desambiguacion y volvia a buscar el producto desde cero. Como
+            # "un cuarto de pollo a la brasa" no matchea NINGUN producto por
+            # nombre exacto, caia otra vez en el listado completo de la
+            # categoria y repetia la MISMA pregunta con las 4 opciones, sin
+            # avanzar nunca. Se intenta resolver contra lo pendiente ANTES
+            # de una busqueda nueva -- si el cliente ya dijo algo que
+            # distingue una opcion (ej. "del menu"), se usa esa.
+            if (
+                pending_clarification_before_turn is not None
+                and state.pending_clarification is pending_clarification_before_turn
+            ):
+                resolved = _resolve_pending_clarification(state, item.raw_text)
+                if resolved:
+                    state.pending_clarification = None
+                    self._add_or_increment_item(state, resolved, item.quantity, item.notes)
+                    continue
 
             result = await self._call_tool(tool_calls, "products.search", {"query": item.query})
             candidates = result.get("products", [])
@@ -737,19 +769,26 @@ class AgentRuntime:
                 if pending_tokens and pending_tokens & best_tokens:
                     state.pending_clarification = None
 
-            existing = next((line for line in state.items if line.product_id == best["id"]), None)
-            if existing:
-                existing.quantity += item.quantity
-                if item.notes:
-                    existing.notes = f"{existing.notes}; {item.notes}" if existing.notes else item.notes
-            else:
-                state.items.append(
-                    OrderLineDraft(
-                        product_id=best["id"], name=best["name"], quantity=item.quantity,
-                        unit_price=best["price"], notes=item.notes,
-                    )
-                )
+            self._add_or_increment_item(state, best, item.quantity, item.notes)
         return missing, clarifications
+
+    @staticmethod
+    def _add_or_increment_item(state: ConversationState, product: dict, quantity: int, notes: str | None) -> None:
+        """Suma cantidad si el producto ya esta en el carrito, o lo agrega
+        de nuevo -- logica compartida entre la resolucion de una
+        aclaracion pendiente y el match directo por busqueda."""
+        existing = next((line for line in state.items if line.product_id == product["id"]), None)
+        if existing:
+            existing.quantity += quantity
+            if notes:
+                existing.notes = f"{existing.notes}; {notes}" if existing.notes else notes
+        else:
+            state.items.append(
+                OrderLineDraft(
+                    product_id=product["id"], name=product["name"], quantity=quantity,
+                    unit_price=product["price"], notes=notes,
+                )
+            )
 
     def _next_missing_detail(self, state: ConversationState) -> str | None:
         if not state.has_real_name:

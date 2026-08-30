@@ -21,6 +21,37 @@ def normalize_text(text: str) -> str:
     return _PUNCTUATION_RE.sub("", text)
 
 
+# Bug real, reportado en vivo: el catalogo guarda las fracciones en numero
+# ("1/2 Costillar a la BBQ", "1/4 de Pollo a la Brasa"), pero el cliente
+# las dice con palabras ("medio pollo", "un cuarto de pollo a la brasa") --
+# esas dos formas nunca calzaban entre si, asi que el agente no encontraba
+# el producto y volvia a preguntar lo mismo una y otra vez (el cliente
+# decia "un cuarto de pollo a la brasa" y el agente repetia la MISMA
+# pregunta con las 4 variantes, sin poder acotar cual). "tres cuartos" va
+# ANTES que "cuarto" a proposito: si "cuarto" se aplicara primero, se
+# comeria la mitad de "tres cuartos" y dejaria "tres 1/4" mal armado.
+_SPOKEN_FRACTION_REPLACEMENTS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"\btres\s+cuartos?\b", re.IGNORECASE), "3/4"),
+    (re.compile(r"\b(?:un\s+)?cuartos?\b", re.IGNORECASE), "1/4"),
+    (re.compile(r"\b(?:un\s+)?medios?\b", re.IGNORECASE), "1/2"),
+    # "pollo completo" (forma natural de pedirlo) -> el catalogo lo tiene
+    # como "Pollo Entero a la Brasa", nunca "completo".
+    (re.compile(r"\bcompletos?\b", re.IGNORECASE), "entero"),
+)
+
+
+def normalize_spoken_fractions(text: str) -> str:
+    """Inverso de speakify_product_name (ver agents/runtime.py): convierte
+    la fraccion dicha en palabras a la notacion numerica del catalogo,
+    para que el matching de productos encuentre el mismo item que el
+    cliente esta pidiendo. Se usa SOLO para buscar/desambiguar productos,
+    nunca para texto que se le muestra o dice al cliente."""
+    result = text
+    for pattern, replacement in _SPOKEN_FRACTION_REPLACEMENTS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
 # Bug real, reportado en vivo: los nombres del catalogo estan escritos para
 # leerse ("1/2 Costillar a la BBQ", "Aloe Vera 500ml"), no para escucharse
 # -- Deepgram TTS leia "1/2" como fraccion rara y "BBQ" sonaba a "barbiquí".

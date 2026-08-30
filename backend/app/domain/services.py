@@ -21,7 +21,12 @@ from app.domain.schemas import (
     OrderOut,
     ProductOut,
 )
-from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
+from app.domain.text_utils import (
+    normalize_spoken_fractions,
+    normalize_text,
+    tokenize,
+    tokens_partial_match,
+)
 
 _PRODUCT_QUERY_ALIASES = {
     "inca cola": "inca kola",
@@ -45,6 +50,7 @@ _VALID_ORDER_STATUSES = {
 
 
 def _canonical_product_query(query: str) -> str:
+    query = normalize_spoken_fractions(query)
     normalized = " ".join(tokenize(query))
     if normalized in _PRODUCT_QUERY_ALIASES:
         return _PRODUCT_QUERY_ALIASES[normalized]
