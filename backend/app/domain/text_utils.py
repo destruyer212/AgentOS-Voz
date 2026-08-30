@@ -21,6 +21,31 @@ def normalize_text(text: str) -> str:
     return _PUNCTUATION_RE.sub("", text)
 
 
+# Bug real, reportado en vivo: los nombres del catalogo estan escritos para
+# leerse ("1/2 Costillar a la BBQ", "Aloe Vera 500ml"), no para escucharse
+# -- Deepgram TTS leia "1/2" como fraccion rara y "BBQ" sonaba a "barbiquí".
+# Se usa tanto en agents/runtime.py (menu, aclaraciones, resumen de pedido)
+# como en integrations/voice_agent_bridge.py (saludo de "seguimos aquí" al
+# reconectar el stream). Nunca toca el nombre real guardado en la orden o
+# la base de datos -- solo el texto que se arma para hablar.
+_VOICE_WORD_REPLACEMENTS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"\bBBQ\b", re.IGNORECASE), "barbacoa"),
+    (re.compile(r"\b1/2\b"), "medio"),
+    (re.compile(r"\b1/4\b"), "un cuarto"),
+    (re.compile(r"\b3/4\b"), "tres cuartos"),
+    (re.compile(r"\b(\d+)\s*ml\b", re.IGNORECASE), r"\1 mililitros"),
+    (re.compile(r"\b(\d+)\s*[lL]\b"), r"\1 litros"),
+)
+
+
+def speakify_product_name(name: str) -> str:
+    """Version hablada de un nombre de producto -- ver comentario arriba."""
+    result = name
+    for pattern, replacement in _VOICE_WORD_REPLACEMENTS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
 # Orden de mas largo a mas corto -- importa: "papitas" debe calzar con
 # "itas" (le saca la "s" de plural de una), no cortarse primero por un
 # sufijo mas corto que deje "s" colgando.

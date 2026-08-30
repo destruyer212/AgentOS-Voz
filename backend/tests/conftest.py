@@ -21,6 +21,15 @@ from pathlib import Path
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_agentos.db")
 
+# Mismo motivo que el DATABASE_URL de arriba: el backend/.env local trae la
+# URL y API key reales de wsp-service (para poder probarlo a mano) -- sin
+# esto, la suite de tests dispararia avisos de WhatsApp reales cada vez que
+# un test confirma un pedido por voz/chat. Se fuerzan vacias ANTES de
+# importar `app` (mismo motivo de orden que arriba); "" es falsy para el
+# chequeo en wsp_notifications.py, asi que la feature queda apagada.
+os.environ.setdefault("WSP_SERVICE_URL", "")
+os.environ.setdefault("WSP_SERVICE_API_KEY", "")
+
 import pytest
 
 

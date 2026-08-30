@@ -27,6 +27,7 @@ import websockets
 from fastapi import WebSocket
 
 from app.agents.state import peek
+from app.domain.text_utils import speakify_product_name
 from app.infrastructure.config import settings
 from app.integrations import telnyx_client as telnyx
 
@@ -183,7 +184,7 @@ def _greeting_for(call_control_id: str) -> str:
     state = peek(call_control_id)
     if state is not None and state.items:
         return "Seguimos aquí, se cortó un segundo. Retomamos donde íbamos: " + "; ".join(
-            f"{item.quantity} {item.name}" for item in state.items
+            f"{item.quantity} {speakify_product_name(item.name)}" for item in state.items
         ) + ". ¿Seguimos con eso?"
     return _GREETING
 

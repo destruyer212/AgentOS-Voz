@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     stale_conversation_timeout_minutes: int = 20
     stale_conversation_sweep_interval_seconds: int = 300
 
+    # wsp-service: microservicio Baileys separado (repo y despliegue propio,
+    # cuenta AWS distinta -- ver C:\whatsapp-service\DEPLOYMENT.md) que manda
+    # la confirmacion de pedido por WhatsApp real. Opcional a proposito: si
+    # cualquiera de las dos queda vacia, el envio se salta en silencio (ver
+    # app/integrations/wsp_notifications.py) -- nunca debe poder tumbar una
+    # llamada real por un problema de config o de WhatsApp.
+    wsp_service_url: str | None = None
+    wsp_service_api_key: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

@@ -26,8 +26,14 @@ from app.domain.business_hours import business_hours_message
 from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
-from app.domain.text_utils import normalize_text, tokenize, tokens_partial_match
+from app.domain.text_utils import (
+    normalize_text,
+    speakify_product_name,
+    tokenize,
+    tokens_partial_match,
+)
 from app.infrastructure.config import settings
+from app.integrations.wsp_notifications import fire_and_forget, notify_order_confirmed
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
 from app.workflows.engine import WorkflowEngine
@@ -238,7 +244,9 @@ def _pending_clarification_question(state: ConversationState) -> str | None:
         return None
     query = pending.get("query") or "producto"
     options = ", ".join(
-        f"{option['name']} a {_format_money_for_voice(option['price'])}" if "price" in option else option["name"]
+        f"{speakify_product_name(option['name'])} a {_format_money_for_voice(option['price'])}"
+        if "price" in option
+        else speakify_product_name(option["name"])
         for option in (pending.get("options") or [])[:4]
     )
     return f"¿Cuál {query} prefieres: {options}?" if options else None
@@ -539,6 +547,11 @@ class AgentRuntime:
             # ahi seria mucho peor que no colgar (cortarle la llamada a
             # alguien que pidio hablar con una persona).
             state.hangup_after_response = True
+            # Dispara el WhatsApp real en paralelo, sin esperarlo: si
+            # wsp-service esta lento, caido, o sin configurar, la llamada
+            # igual sigue y cuelga normal -- ver wsp_notifications.py.
+            customer_phone = state.customer.get("phone") if state.customer else None
+            fire_and_forget(notify_order_confirmed(order, customer_phone))
             time_part = f" para las {order.requested_time}" if order.requested_time else ""
             response = (
                 f"Listo, pedido confirmado{time_part}, son {_format_money_for_voice(order.total)}. "
@@ -607,7 +620,9 @@ class AgentRuntime:
                 f"Tenemos {readable_categories}. ¿Qué categoría te provoca?"
             )
         else:
-            names = [f"{p['name']} a {_format_money_for_voice(p['price'])}" for p in products[:6]]
+            names = [
+                f"{speakify_product_name(p['name'])} a {_format_money_for_voice(p['price'])}" for p in products[:6]
+            ]
             intro = f"En {_MENU_CATEGORY_LABELS.get(category, 'esa categoría')} tenemos: "
             response = intro + ", ".join(names) + ". ¿Qué te provoca?"
         return await self._finish(state, response, "menu.inquiry", [], tool_calls, None)
@@ -683,7 +698,7 @@ class AgentRuntime:
                         # seguir por telefono.
                         label = _MENU_CATEGORY_LABELS.get(category, item.query)
                         option_names = ", ".join(
-                            f"{option['name']} a {_format_money_for_voice(option['price'])}"
+                            f"{speakify_product_name(option['name'])} a {_format_money_for_voice(option['price'])}"
                             for option in options[:5]
                         )
                         clarifications.append(f"En {label} tenemos: {option_names}. ¿Cuál prefieres?")
@@ -698,7 +713,8 @@ class AgentRuntime:
                 # por la misma razon que arriba: mas facil de distinguir por
                 # telefono que una lista de nombres seguidos.
                 options = ", ".join(
-                    f"{c['name']} a {_format_money_for_voice(c['price'])}" for c in candidates[:4]
+                    f"{speakify_product_name(c['name'])} a {_format_money_for_voice(c['price'])}"
+                    for c in candidates[:4]
                 )
                 clarifications.append(f"¿Cuál {item.query} prefieres: {options}?")
                 ambiguous_query_tokens.append(set(tokenize(item.query)))
@@ -929,7 +945,7 @@ class AgentRuntime:
 
     def _build_summary(self, state: ConversationState) -> str:
         lines = [
-            f"{item.quantity} {item.name}" + (f" ({item.notes})" if item.notes else "")
+            f"{item.quantity} {speakify_product_name(item.name)}" + (f" ({item.notes})" if item.notes else "")
             for item in state.items
         ]
         total = sum(item.quantity * item.unit_price for item in state.items)
