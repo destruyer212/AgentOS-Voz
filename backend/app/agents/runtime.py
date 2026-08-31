@@ -169,7 +169,11 @@ def _match_fulfillment(lowered: str) -> str | None:
 
 
 def _match_payment(lowered: str) -> str | None:
-    if "yape" in lowered:
+    # Bug real, visto en vivo: el ASR transcribio "Yape" como "yate"
+    # (barco) -- fonéticamente muy parecido por telefono. Sin este alias
+    # caia a la busqueda de productos ("No encontre Pago con yate en el
+    # menu") en vez de reconocerse como respuesta de pago.
+    if "yape" in lowered or "yate" in lowered:
         return "yape"
     if "plin" in lowered:
         return "plin"

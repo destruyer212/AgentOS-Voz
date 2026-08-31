@@ -1099,3 +1099,30 @@ async def test_spoken_fraction_words_resolve_against_numeric_catalog_names():
             assert "prefieres" not in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_yape_misheard_as_yate_still_resolves_as_payment():
+    # Bug real, visto en vivo: el ASR transcribio "Pago con Yape" como
+    # "Pago con yate" (barco) -- fonéticamente muy parecido por telefono.
+    # Sin el alias, caia a la busqueda de productos ("No encontre Pago con
+    # yate en el menu") en vez de reconocerse como forma de pago, dejando
+    # al cliente atascado en el mismo paso.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_payment"
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Pago con yate.", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.payment_method == "yape"
+            assert "no encontré" not in turn.response.lower()
+    finally:
+        reset(conversation_id)
