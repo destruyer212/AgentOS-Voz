@@ -444,6 +444,19 @@ class AgentRuntime:
                 ]
                 parsed.intent = "order.modify"
 
+        # Bug real, visto en vivo: con una aclaracion pendiente ("Cual
+        # cuarto de pollo prefieres...?"), "¿Puede repetir, por favor?"
+        # parseaba como order.create (no como smalltalk), asi que el
+        # manejo especifico de "repiteme la pregunta" (mas abajo, atado a
+        # smalltalk+telefono) nunca se activaba -- se buscaba como
+        # PRODUCTO ("No encontre ¿Puede repetir en el menu") y se perdia
+        # la pregunta pendiente. Se revisa ANTES de mirar el intent, para
+        # cualquier canal.
+        if state.pending_clarification and is_audio_repair_message(payload.message):
+            clarification = _pending_clarification_question(state)
+            if clarification:
+                return await self._finish(state, clarification, "smalltalk", [], tool_calls, None)
+
         # Bug real, visto en vivo: el resumen final mostro un nombre mal
         # capturado ("A nombre de ¿Puede repetir?. ¿Confirmas?") y el
         # cliente intento corregirlo tres veces ("Dayana.", "Mi nombre es",

@@ -1361,3 +1361,81 @@ async def test_partial_item_success_is_confirmed_not_silent():
             assert "no encontré" in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_please_repeat_during_pending_clarification_repeats_it_not_a_product_search():
+    # Bug real, visto en vivo: con una aclaracion pendiente ("Cual cuarto
+    # de pollo prefieres...?"), el cliente dijo "¿Puede repetir, por
+    # favor?" -- eso parseaba como order.create (no como smalltalk), asi
+    # que se buscaba como PRODUCTO ("No encontre ¿Puede repetir en el
+    # menu") y se perdia la pregunta pendiente por completo.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            first = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero una hamburguesa", conversation_id=conversation_id, channel="web")
+            )
+            assert "prefieres" in first.response.lower()
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="¿Puede repetir, por favor?", conversation_id=conversation_id, channel="web"
+                )
+            )
+            assert "no encontré" not in turn.response.lower()
+            assert "prefieres" in turn.response.lower()  # repite la MISMA pregunta
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_spoken_mas_resolves_against_catalog_plus_sign():
+    # Bug real, visto en vivo: el cliente dijo "un cuarto de pollo, el
+    # olivar mas anticucho" para pedir "1/4 de Pollo a la Brasa El Olivar
+    # + Anticucho" -- "mas" (como lo dice el cliente) nunca calzaba con
+    # "+" (como esta en el catalogo), asi que la aclaracion no se
+    # resolvia nunca con esa frase.
+    # Nombres unicos (no "1/4 de Pollo a la Brasa" a secas -- ese nombre lo
+    # reusan varios tests de este archivo en la misma test_agentos.db
+    # compartida, y con 4+ copias duplicadas el candidates[:4] de la
+    # busqueda ya no trae la variante Olivar+Anticucho adentro).
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-COSTQA5", "1/4 de Costilla QA5", 21.5),
+            ("TEST-COSTQA5-ANT", "1/4 de Costilla QA5 El Olivar + Anticucho", 28.0),
+        ):
+            product = Product(
+                tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="pollo_brasa"
+            )
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            # Sin "QA5" en lo que dice el cliente a proposito: asi ninguna
+            # de las 2 opciones matchea exacto y sigue siendo ambigua.
+            first = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero un cuarto de costilla.", conversation_id=conversation_id, channel="web"
+                )
+            )
+            assert "prefieres" in first.response.lower()
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="El olivar mas anticucho.", conversation_id=conversation_id, channel="web"
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["1/4 de Costilla QA5 El Olivar + Anticucho"]
+            assert "prefieres" not in turn.response.lower()
+    finally:
+        reset(conversation_id)

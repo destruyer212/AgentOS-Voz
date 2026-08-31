@@ -92,6 +92,20 @@ _AUDIO_REPAIR_PHRASES = {
     "se esta cortando",
     "sigue mudo",
     "sigue muda",
+    # Bug real, visto en vivo: "¿Puede repetir, por favor?" (pidiendo que
+    # el agente repita la pregunta, no un problema de audio) no calzaba
+    # con nada de arriba y terminaba buscandose como PRODUCTO ("No
+    # encontre ¿Puede repetir en el menu"), perdiendo la pregunta
+    # pendiente. El remedio es el mismo (repetir lo ultimo preguntado),
+    # asi que se trata igual aunque el motivo sea distinto.
+    "puede repetir",
+    "puedes repetir",
+    "podria repetir",
+    "podrias repetir",
+    "me lo repites",
+    "repiteme",
+    "que dijiste",
+    "como dijiste",
 }
 _PRODUCT_SEQUENCE_PATTERNS = [
     (re.compile(pattern), canonical)

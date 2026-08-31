@@ -58,6 +58,22 @@ def test_text_without_fractions_is_untouched():
     assert normalize_spoken_fractions("una coca cola") == "una coca cola"
 
 
+def test_plus_sign_speaks_as_mas():
+    # Bug real, visto en vivo: "El Olivar + Anticucho" se leia el signo
+    # "+" literal en vez de decir "más", como diria una persona.
+    assert speakify_product_name("1/4 de Pollo a la Brasa El Olivar + Anticucho") == (
+        "un cuarto de Pollo a la Brasa El Olivar más Anticucho"
+    )
+
+
+def test_plus_sign_and_spoken_mas_tokenize_the_same():
+    # Bug real, visto en vivo: el cliente dijo "el olivar mas anticucho"
+    # para pedir esa variante, pero el catalogo tiene "+" -- nunca
+    # calzaban entre si. Con el "+" normalizado a "mas", ambos textos
+    # producen los mismos tokens.
+    assert tokenize("El Olivar + Anticucho") == tokenize("el olivar mas anticucho")
+
+
 def test_eso_is_a_stopword_and_does_not_leak_into_queso():
     # Bug real, visto en vivo: "Eso nomás." (el cliente terminando el
     # pedido) se agrego como "Queso Pausterizado" -- "eso" es SUFIJO real

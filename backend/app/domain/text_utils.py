@@ -17,6 +17,13 @@ def strip_accents(text: str) -> str:
 
 
 def normalize_text(text: str) -> str:
+    # Bug real, visto en vivo: el catalogo combina productos con "+"
+    # ("1/4 de Pollo a la Brasa El Olivar + Anticucho"), pero el cliente
+    # lo dice como "mas" ("el olivar mas anticucho") -- nunca calzaban
+    # entre si porque "+" y "mas" son strings distintos. Normalizando el
+    # "+" a "mas" ANTES de tokenizar, tanto el nombre del catalogo como lo
+    # que dice el cliente terminan con el mismo token.
+    text = text.replace("+", " mas ")
     text = strip_accents(text).lower().strip()
     return _PUNCTUATION_RE.sub("", text)
 
@@ -66,6 +73,9 @@ _VOICE_WORD_REPLACEMENTS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\b3/4\b"), "tres cuartos"),
     (re.compile(r"\b(\d+)\s*ml\b", re.IGNORECASE), r"\1 mililitros"),
     (re.compile(r"\b(\d+)\s*[lL]\b"), r"\1 litros"),
+    # "El Olivar + Anticucho" se leia el signo "+" literal (silencio o
+    # sonido raro en la voz) en vez de decir "más", como diria una persona.
+    (re.compile(r"\s*\+\s*"), " más "),
 )
 
 
