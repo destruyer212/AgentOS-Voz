@@ -1287,3 +1287,34 @@ async def test_question_mark_phrase_is_never_accepted_as_customer_name():
             assert name in (None, "Cliente telefonico")  # nunca la pregunta literal
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_name_correction_during_confirmation_updates_summary_instead_of_searching_menu():
+    # Bug real, visto en vivo: el resumen final mostro un nombre mal
+    # capturado ("A nombre de ¿Puede repetir?. ¿Confirmas?") y el cliente
+    # intento corregirlo ("Dayana.", "Mi nombre es", "Mi nombre es
+    # Dayana.") -- cada intento se buscaba como producto ("No encontre
+    # Dayana en el menu") en vez de reconocerse como correccion de nombre,
+    # y el resumen seguia mostrando el nombre viejo para siempre.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local", "efectivo"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "awaiting_confirmation"
+            assert state.customer["name"] == "Carlos"
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Mi nombre es Dayana.", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.customer["name"] == "Dayana"
+            assert state.status == "awaiting_confirmation"  # sigue esperando confirmar, con el nombre ya corregido
+            assert "no encontré" not in turn.response.lower()
+            assert "dayana" in turn.response.lower()
+    finally:
+        reset(conversation_id)

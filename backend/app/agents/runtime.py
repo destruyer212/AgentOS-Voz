@@ -444,6 +444,27 @@ class AgentRuntime:
                 ]
                 parsed.intent = "order.modify"
 
+        # Bug real, visto en vivo: el resumen final mostro un nombre mal
+        # capturado ("A nombre de ¿Puede repetir?. ¿Confirmas?") y el
+        # cliente intento corregirlo tres veces ("Dayana.", "Mi nombre es",
+        # "Mi nombre es Dayana.") -- cada intento se buscaba como PRODUCTO
+        # ("No encontre Dayana en el menu") en vez de reconocerse como una
+        # correccion de nombre, y el resumen seguia mostrando el nombre
+        # viejo. Solo se activa con un prefijo explicito ("mi nombre es"/
+        # "me llamo"/etc, ver _NAME_PREFIX_RE) para no confundir una
+        # correccion de nombre con una modificacion real del pedido.
+        if awaiting_confirmation and state.items and _NAME_PREFIX_RE.match(payload.message.strip()):
+            corrected_name = _extract_name(payload.message)
+            if corrected_name and not re.search(r"[\d?¿]", corrected_name):
+                state.customer = {**(state.customer or {}), "name": corrected_name}
+                if state.customer.get("id"):
+                    await CustomerService(self.session, self.tenant_id).update_name(
+                        state.customer["id"], corrected_name
+                    )
+                state.has_real_name = True
+                response = "Listo, corregido. " + self._build_summary(state)
+                return await self._finish(state, response, "order.modify", [], tool_calls, None)
+
         if parsed.intent == "handoff":
             await self._call_tool(
                 tool_calls, "conversation.transfer_to_human",
