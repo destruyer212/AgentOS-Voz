@@ -553,7 +553,7 @@ class AgentRuntime:
                         ],
                     ]
 
-            missing, clarifications = await self._normalize_items(state, parsed.items, tool_calls)
+            missing, clarifications, added = await self._normalize_items(state, parsed.items, tool_calls)
             if parsed.requested_time:
                 state.requested_time = parsed.requested_time
 
@@ -563,7 +563,15 @@ class AgentRuntime:
 
             if missing:
                 state.status = "collecting"
-                response = "No encontré " + "; ".join(missing) + " en el menú. ¿Me lo repites o pides otra cosa?"
+                # Bug real, visto en vivo: si el mensaje traia otro item que
+                # SI se agrego bien (ej. "Salvan negro y torta de
+                # chocolate." -> "torta de chocolate" entraba sola), la
+                # respuesta vieja solo hablaba de lo que fallo -- el cliente
+                # nunca se enteraba que la otra parte ya habia entrado y la
+                # repetia en el turno siguiente, duplicandola. Se confirma
+                # primero lo que si se agrego.
+                ack = f"Agregué {', '.join(added)}. " if added else ""
+                response = ack + "No encontré " + "; ".join(missing) + " en el menú. ¿Me lo repites o pides otra cosa?"
                 return await self._finish(state, response, "order.create", missing, tool_calls, None)
 
             if not state.items:
@@ -686,9 +694,18 @@ class AgentRuntime:
 
     async def _normalize_items(
         self, state: ConversationState, parsed_items: list[ParsedItem], tool_calls: list[ToolCallOut]
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str]]:
         missing: list[str] = []
         clarifications: list[str] = []
+        # Bug real, visto en vivo: "Salvan negro y torta de chocolate." ->
+        # "torta de chocolate" SI se agregaba, pero la respuesta solo decia
+        # "No encontre Salvan negro" -- el cliente nunca se enteraba que la
+        # otra parte ya habia entrado, asi que en el turno siguiente volvia
+        # a decir la frase completa y "Torta de Chocolate" terminaba
+        # duplicada en el pedido. Se junta el nombre (hablado) de cada item
+        # que SI se agrego en este turno para poder confirmarlo en la
+        # respuesta, no solo lo que fallo.
+        added: list[str] = []
         # Terminos que quedaron ambiguos EN ESTE MISMO TURNO (ej. "hamburguesa"
         # -> se pregunto cual variante). Si un item posterior del mismo mensaje
         # resuelve a un producto cuyo nombre contiene ese termino (ej. "BBQ" ->
@@ -759,6 +776,7 @@ class AgentRuntime:
                 if resolved:
                     state.pending_clarification = None
                     self._add_or_increment_item(state, resolved, item.quantity, item.notes)
+                    added.append(f"{item.quantity} {speakify_product_name(resolved['name'])}")
                     resolved_via_pending_tokens.append(set(tokenize(resolved["name"])))
                     continue
 
@@ -851,7 +869,8 @@ class AgentRuntime:
                     state.pending_clarification = None
 
             self._add_or_increment_item(state, best, item.quantity, item.notes)
-        return missing, clarifications
+            added.append(f"{item.quantity} {speakify_product_name(best['name'])}")
+        return missing, clarifications, added
 
     @staticmethod
     def _add_or_increment_item(state: ConversationState, product: dict, quantity: int, notes: str | None) -> None:
@@ -974,7 +993,7 @@ class AgentRuntime:
             state.requested_time = parsed.requested_time
 
         if parsed.items or parsed.intent in ("order.create", "order.modify"):
-            missing, clarifications = await self._normalize_items(state, parsed.items, tool_calls)
+            missing, clarifications, _added = await self._normalize_items(state, parsed.items, tool_calls)
 
             if not state.items:
                 state.status = "collecting"

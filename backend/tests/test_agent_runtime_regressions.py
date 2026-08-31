@@ -1318,3 +1318,46 @@ async def test_name_correction_during_confirmation_updates_summary_instead_of_se
             assert "dayana" in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_partial_item_success_is_confirmed_not_silent():
+    # Bug real, visto en vivo: "Salvan negro y torta de chocolate." (STT
+    # garbled "Selva Negra") -- "torta de chocolate" SI se agregaba, pero
+    # la respuesta solo decia "No encontre Salvan negro", nunca mencionaba
+    # lo que si entro. El cliente, sin saber que ya se habia agregado,
+    # repetia la frase completa en el turno siguiente y terminaba con
+    # "Torta de Chocolate" duplicada en el pedido (2 en vez de 1).
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-TORTA-CHOC", "Torta de Chocolate", 9.0),
+            ("TEST-SELVA-NEGRA", "Selva Negra", 9.0),
+        ):
+            product = Product(
+                tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="postre"
+            )
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero Salvan negro y torta de chocolate.",
+                    conversation_id=conversation_id,
+                    channel="web",
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            # Se agrego SOLO 1 Torta de Chocolate -- no la duplico.
+            assert [(i.name, i.quantity) for i in state.items] == [("Torta de Chocolate", 1)]
+            # Y la respuesta lo confirma en vez de quedarse callada.
+            assert "torta de chocolate" in turn.response.lower()
+            assert "no encontré" in turn.response.lower()
+    finally:
+        reset(conversation_id)
