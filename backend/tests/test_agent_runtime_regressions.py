@@ -1255,3 +1255,35 @@ async def test_trailing_fragment_after_resolved_clarification_is_not_a_new_searc
             assert "prefieres" not in second.response.lower()  # NO debe volver a preguntar nada
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_question_mark_phrase_is_never_accepted_as_customer_name():
+    # Bug real, visto en vivo: en una llamada telefonica, el nombre del
+    # cliente quedo guardado literal como "¿Puede repetir?" (una frase de
+    # pregunta, no un nombre real -- probablemente la propia voz del agente
+    # mal etiquetada como turno del cliente por el STT). Paso el chequeo de
+    # "1 a 4 palabras sin digitos" sin problema y termino en la confirmacion
+    # del pedido y hasta en el mensaje real de WhatsApp. Un nombre de verdad
+    # nunca lleva "?"/"¿".
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            first = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero una hamburguesa clasica", conversation_id=conversation_id, channel="web"
+                )
+            )
+            assert first.status == "need_name"
+
+            await runtime.handle_turn(
+                AgentMessageIn(message="¿Puede repetir?", conversation_id=conversation_id, channel="web")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_name"  # no avanzo con un nombre invalido
+            name = (state.customer or {}).get("name")
+            assert name in (None, "Cliente telefonico")  # nunca la pregunta literal
+    finally:
+        reset(conversation_id)

@@ -205,7 +205,13 @@ def _safe_literal_detail(current: str, message: str, lowered: str) -> str | None
     if current == "need_name":
         cleaned = _extract_name(message)
         tokens = cleaned.split()
-        if 1 <= len(tokens) <= 4 and not re.search(r"\d", cleaned):
+        # Bug real, visto en vivo: en una llamada, el nombre del cliente
+        # quedo guardado literal como "¿Puede repetir?" (probablemente la
+        # propia voz del agente pidiendo repetir, mal etiquetada como turno
+        # del cliente por el STT) -- paso el chequeo de 1-4 palabras sin
+        # digitos sin problema y termino en la confirmacion del pedido y
+        # hasta en el WhatsApp real. Un nombre de verdad nunca lleva "?"/"¿".
+        if 1 <= len(tokens) <= 4 and not re.search(r"\d", cleaned) and "?" not in cleaned and "¿" not in cleaned:
             return cleaned
         return None
 

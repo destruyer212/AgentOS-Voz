@@ -3,7 +3,7 @@ real reportado en vivo -- "1/2"/"1/4" se leian como fraccion rara y "BBQ"
 sonaba a "barbiquí" en la voz de Deepgram. Casos tomados de nombres reales
 del catalogo de El Olivar Grill."""
 
-from app.domain.text_utils import normalize_spoken_fractions, speakify_product_name
+from app.domain.text_utils import normalize_spoken_fractions, speakify_product_name, tokenize
 
 
 def test_half_fraction_reads_as_medio():
@@ -56,3 +56,14 @@ def test_spoken_completo_normalizes_to_entero():
 
 def test_text_without_fractions_is_untouched():
     assert normalize_spoken_fractions("una coca cola") == "una coca cola"
+
+
+def test_eso_is_a_stopword_and_does_not_leak_into_queso():
+    # Bug real, visto en vivo: "Eso nomás." (el cliente terminando el
+    # pedido) se agrego como "Queso Pausterizado" -- "eso" es SUFIJO real
+    # de "queso" ("qu-ESO"), asi que el match parcial (prefijo/sufijo, min
+    # 3 letras) lo daba por valido, igual que "cola" matchea "coca-cola".
+    # "eso" es un pronombre demostrativo, nunca deberia buscarse como
+    # producto -- se filtra como stopword antes de llegar al matching.
+    assert "eso" not in tokenize("Eso nomás.")
+    assert "esa" not in tokenize("Quiero esa por favor")

@@ -128,6 +128,14 @@ def singularize(word: str) -> str:
 _STOPWORDS = {
     "de", "del", "la", "el", "lo", "los", "las", "un", "una", "uno", "unos", "unas",
     "y", "o", "con", "sin", "por", "para", "que", "al", "en",
+    # Bug real, visto en vivo: el cliente dijo "Eso nomás." (queriendo decir
+    # "nada mas, ya termine") y el agente lo agrego como pedido de "Queso
+    # Pausterizado" -- "eso" (3 letras) es SUFIJO real de "queso" ("qu-ESO"),
+    # asi que tokens_partial_match lo daba por valido (mismo mecanismo,
+    # legitimo, que hace que "cola" matchee "coca-cola"). Como pronombre
+    # demostrativo, "eso"/"esa"/"ese"/etc. nunca son parte de un nombre de
+    # producto real -- se descartan igual que los articulos de arriba.
+    "eso", "esa", "ese", "esos", "esas",
 }
 
 
