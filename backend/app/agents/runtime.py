@@ -175,7 +175,10 @@ def _match_payment(lowered: str) -> str | None:
     # menu") en vez de reconocerse como respuesta de pago.
     if "yape" in lowered or "yate" in lowered:
         return "yape"
-    if "plin" in lowered:
+    # "pli" cubre el mismo tipo de corte del ASR que "yate"/"yape" arriba
+    # (la palabra llega recortada por telefono). \b para no matchear "pli"
+    # adentro de otra palabra (ej. "explicar", "cumplir").
+    if "plin" in lowered or re.search(r"\bpli\b", lowered):
         return "plin"
     if any(k in lowered for k in ("efectivo", "cash", "contado")):
         return "efectivo"

@@ -1126,3 +1126,39 @@ async def test_yape_misheard_as_yate_still_resolves_as_payment():
             assert "no encontré" not in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_pli_recognized_as_plin_but_not_inside_other_words():
+    # "pli" recortado (mismo motivo que "yate" arriba) debe reconocerse
+    # como Plin -- pero con limite de palabra, para no matchear "pli"
+    # adentro de "explicar"/"cumplir" y confundir eso con una respuesta
+    # de pago.
+    from app.agents.runtime import _match_payment
+
+    assert _match_payment("pago con pli") == "plin"
+    assert _match_payment("pli") == "plin"
+    assert _match_payment("me puedes explicar las opciones de pago") is None
+    assert _match_payment("necesito cumplir con el pedido") is None
+
+
+@pytest.mark.asyncio
+async def test_pli_misheard_plin_resolves_as_payment_end_to_end():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_payment"
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Pago con pli.", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.payment_method == "plin"
+            assert "no encontré" not in turn.response.lower()
+    finally:
+        reset(conversation_id)
