@@ -294,7 +294,12 @@ def _item_answers_pending_clarification(
     pending: dict, resolved: dict, item: ParsedItem
 ) -> bool:
     candidates = pending.get("options") or []
-    item_tokens = set(tokenize(item.query))
+    # normalize_spoken_fractions: "un cuarto de pollo" (lo que dijo el
+    # cliente, y lo que queda en item.query tras sacarle un modificador
+    # como "con anticucho") nunca matcheaba el "1/4" del nombre real del
+    # producto resuelto -- sin esto este chequeo siempre daba False y el
+    # item "sobrante" se volvia a procesar como si fuera otro pedido.
+    item_tokens = set(tokenize(normalize_spoken_fractions(item.query)))
     if not candidates or not item_tokens:
         return False
 
@@ -673,6 +678,17 @@ class AgentRuntime:
         # BBQ" de arriba, que ambiguous_query_tokens ya cubre distinto: ahi
         # NO hay que resolver de una, hay que esperar la respuesta).
         pending_clarification_before_turn = state.pending_clarification
+        # Tokens del producto YA resuelto en este mismo turno via la
+        # aclaracion pendiente (ver mas abajo). Bug real, visto en vivo: el
+        # parser separa "un cuarto de pollo con anticucho, el olivar." en
+        # DOS items -- el primero resuelve bien contra la aclaracion
+        # pendiente ("...con anticucho" -> "1/4 Pollo... Anticucho"), pero
+        # el segundo ("el olivar", el resto de la MISMA frase) se buscaba
+        # de cero como si fuera OTRO producto, encontraba varios "El
+        # Olivar" sueltos (ensalada, menu, etc.) y pisaba la aclaracion ya
+        # resuelta con una pregunta nueva -- el cliente sentia que nunca
+        # se le entendia nada.
+        resolved_via_pending_tokens: list[set[str]] = []
 
         for item in parsed_items:
             action = item.action or "add"
@@ -716,7 +732,18 @@ class AgentRuntime:
                 if resolved:
                     state.pending_clarification = None
                     self._add_or_increment_item(state, resolved, item.quantity, item.notes)
+                    resolved_via_pending_tokens.append(set(tokenize(resolved["name"])))
                     continue
+
+            # Resto de la MISMA frase que ya resolvio la aclaracion pendiente
+            # arriba (ej. "el olivar" despues de "...con anticucho") -- no es
+            # un producto nuevo, es la cola de lo que ya se agrego.
+            # normalize_spoken_fractions por el mismo motivo que arriba.
+            item_query_tokens = set(tokenize(normalize_spoken_fractions(item.query)))
+            if item_query_tokens and any(
+                item_query_tokens <= resolved_tokens for resolved_tokens in resolved_via_pending_tokens
+            ):
+                continue
 
             result = await self._call_tool(tool_calls, "products.search", {"query": item.query})
             candidates = result.get("products", [])
@@ -725,6 +752,20 @@ class AgentRuntime:
                 if category:
                     menu_result = await self._call_tool(tool_calls, "products.menu", {"category": category})
                     options = menu_result.get("products", [])
+                    if options and clarifications:
+                        # Bug real, visto en vivo: "un cuarto de pollo, el
+                        # olivar" -- dos fragmentos AMBIGUOS en el mismo
+                        # mensaje generaban DOS preguntas de aclaracion
+                        # pegadas en una sola respuesta ("Cual cuarto de
+                        # pollo prefieres...? Cual olivar prefieres...?"),
+                        # y la segunda pisaba el pending_clarification de
+                        # la primera -- resultado: loop sin poder avanzar
+                        # nunca. Solo se pregunta UNA cosa por turno; el
+                        # segundo fragmento ambiguo se guarda como
+                        # "missing" y el cliente lo puede repetir despues
+                        # de resolver la primera.
+                        missing.append(item.raw_text)
+                        continue
                     if options:
                         # Bug real, visto en vivo: "Quiero ofertas" -> la
                         # respuesta vieja era "Que ofertas prefieres: Mega
@@ -743,6 +784,12 @@ class AgentRuntime:
                         clarifications.append(f"En {label} tenemos: {option_names}. ¿Cuál prefieres?")
                         state.pending_clarification = {"query": item.query, "options": options[:5]}
                         continue
+                missing.append(item.raw_text)
+                continue
+
+            if result.get("ambiguous") and clarifications:
+                # Mismo motivo que arriba: no apilar una segunda pregunta
+                # de aclaracion en el mismo turno.
                 missing.append(item.raw_text)
                 continue
 

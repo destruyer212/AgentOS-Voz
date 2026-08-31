@@ -1162,3 +1162,96 @@ async def test_pli_misheard_plin_resolves_as_payment_end_to_end():
             assert "no encontré" not in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_two_ambiguous_fragments_in_same_message_ask_only_one_question():
+    # Bug real, visto en vivo (llamada de produccion): "Quiero un cuarto de
+    # pollo, el olivar." trae DOS fragmentos ambiguos en el mismo mensaje
+    # ("cuarto de pollo" matchea 4 variantes; "el olivar" matchea otros 4
+    # productos distintos que tienen "Olivar" en el nombre). Sin proteccion,
+    # el agente generaba DOS preguntas de aclaracion y las pegaba en una
+    # sola respuesta confusa ("Cual cuarto de pollo prefieres...? Cual
+    # olivar prefieres...?"), y la segunda pisaba el pending_clarification
+    # de la primera -- resultado: loop, nunca se podia avanzar.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price, category in (
+            ("TEST-POL-CUA3", "1/4 de Pollo a la Brasa", 21.5, "pollo_brasa"),
+            ("TEST-POL-CUA-ANT3", "1/4 de Pollo a la Brasa El Olivar + Anticucho", 28.0, "pollo_brasa"),
+            ("TEST-FET-HUA3", "Fetuccini a la Huancaina con 1/4 de Pollo", 26.0, "pasta"),
+            ("TEST-FET-ALF3", "Fetuccini a lo Alfredo con 1/4 de Pollo", 28.5, "pasta"),
+            ("TEST-ENS-OLI3", "Ensalada El Olivar", 15.0, "ensalada"),
+            ("TEST-HUA-OLI3", "Huayrito El Olivar", 26.0, "pollo_brasa"),
+            ("TEST-MEN-OLI3", "Menu Pollo El Olivar", 22.5, "menu"),
+        ):
+            product = Product(tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category=category)
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero un cuarto de pollo, el olivar", conversation_id=conversation_id, channel="web"
+                )
+            )
+            # Solo UNA pregunta de aclaracion, no dos pegadas.
+            assert turn.response.lower().count("prefieres") == 1
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_trailing_fragment_after_resolved_clarification_is_not_a_new_search():
+    # Bug real, visto en vivo (llamada real): tras "¿Cual cuarto de pollo
+    # prefieres: ... El Olivar + Anticucho ...?", el cliente contesto
+    # "un cuarto de pollo con anticucho, el olivar." -- el parser separa
+    # esto en DOS items: el primero ("...con anticucho") resuelve bien
+    # contra la aclaracion pendiente, pero el segundo ("el olivar", la
+    # cola de la MISMA frase) se buscaba de cero como si fuera OTRO
+    # producto, encontraba varios "El Olivar" sueltos sin relacion
+    # (ensalada, menu) y pisaba lo que ya se habia resuelto bien con una
+    # pregunta nueva -- el cliente sentia que nunca se le entendia nada.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-POL-CUA2", "1/4 de Pollo a la Brasa", 21.5),
+            ("TEST-POL-CUA-ANT2", "1/4 de Pollo a la Brasa El Olivar + Anticucho", 28.0),
+            ("TEST-FET-HUA2", "Fetuccini a la Huancaina con 1/4 de Pollo", 26.0),
+            ("TEST-FET-ALF2", "Fetuccini a lo Alfredo con 1/4 de Pollo", 28.5),
+            ("TEST-ENS-OLV2", "Ensalada El Olivar", 15.0),
+        ):
+            product = Product(
+                tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="pollo_brasa"
+            )
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            first = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero un cuarto de pollo.", conversation_id=conversation_id, channel="web")
+            )
+            assert "prefieres" in first.response.lower()
+
+            second = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero un cuarto de pollo con anticucho, el olivar.",
+                    conversation_id=conversation_id,
+                    channel="web",
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["1/4 de Pollo a la Brasa El Olivar + Anticucho"]
+            assert "prefieres" not in second.response.lower()  # NO debe volver a preguntar nada
+    finally:
+        reset(conversation_id)
