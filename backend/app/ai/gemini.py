@@ -280,6 +280,20 @@ def _is_safe_fast_path(
             return True
         return parsed.intent in _FAST_PATH_ORDER_INTENTS and _items_are_safe_for_fast_path(parsed.items)
 
+    if parsed.intent in {"handoff", "menu.inquiry"}:
+        # Bug real, visto en vivo: "¿Tiene algo de menú?" clasifica sin
+        # ambiguedad como menu.inquiry (correcto), pero "algo" y "menu"
+        # estan en _FAST_PATH_UNSAFE_QUERY_TERMS -- una pregunta de menu
+        # practicamente SIEMPRE va a contener "menu"/"carta"/"algo", asi
+        # que el chequeo de terminos inseguros de abajo (pensado para
+        # detectar una QUERY DE PRODUCTO vaga, ej. "algo barato") vetaba
+        # el fast-path para casi cualquier pregunta real de menu. Cada vez
+        # que eso pasaba, la llamada quedaba en silencio muerto hasta 4s
+        # (el timeout de Gemini) antes de caer al mismo rule_based que ya
+        # habia clasificado bien. Mismo criterio que ya se usaba arriba
+        # cuando hay un pending_detail -- se confia en la clasificacion
+        # sin filtro de terminos, siempre.
+        return True
     if parsed.intent in _FAST_PATH_SAFE_INTENTS:
         return not _message_has_unsafe_terms(message)
     if parsed.intent in _FAST_PATH_ORDER_INTENTS:
