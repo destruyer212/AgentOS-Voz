@@ -36,6 +36,16 @@ _PRODUCT_QUERY_ALIASES = {
     "indo kola": "inca kola",
     "indocola": "inca kola",
     "indokola": "inca kola",
+    # Bug real, visto en vivo: el cliente dijo "Mostro Olivar" (chaufa del
+    # menu) y el ASR lo transcribio como "monstruo olivar" -- "mostro" no
+    # es una palabra comun, asi que el modelo de lenguaje del STT se va
+    # hacia "monstruo" (mucho mas frecuente en español). "monstruo" no
+    # matcheaba "mostro" ni por prefijo ni por sufijo (son substrings
+    # distintos), y "olivar" solo calzaba con OTROS 4 productos de otras
+    # categorias -- nunca encontraba el chaufa real que se acababa de
+    # nombrar en el turno anterior.
+    "monstruo olivar": "mostro olivar",
+    "monstruo": "mostro",
 }
 
 

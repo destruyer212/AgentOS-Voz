@@ -648,6 +648,34 @@ async def test_product_search_resolves_inka_kola_voice_aliases():
 
 
 @pytest.mark.asyncio
+async def test_product_search_resolves_mostro_misheard_as_monstruo():
+    # Bug real, visto en vivo: el cliente pidio "Mostro Olivar" (chaufa del
+    # menu) y el ASR lo transcribio como "monstruo olivar" -- "mostro" no
+    # es palabra comun, el modelo de lenguaje del STT se va hacia
+    # "monstruo" (mucho mas frecuente). Sin el alias, "olivar" solo
+    # calzaba con OTROS productos de otras categorias, nunca con el
+    # chaufa real que se acababa de nombrar.
+    from app.domain.services import ProductService
+
+    async with AsyncSessionLocal() as session:
+        product = Product(
+            tenant_id=settings.default_tenant_id, sku="TEST-MOSTRO-OLV", name="Mostro Olivar",
+            price=25.0, category="chaufa",
+        )
+        session.add(product)
+        await session.flush()
+        session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        svc = ProductService(session, settings.default_tenant_id)
+        for query in ("monstruo olivar", "el monstruo"):
+            results = await svc.search_scored(query)
+            assert results
+            assert results[0][1].name == "Mostro Olivar"
+
+
+@pytest.mark.asyncio
 async def test_adjacent_generic_burger_keeps_beverage_and_asks_burger_variant():
     conversation_id = _conversation_id()
 
