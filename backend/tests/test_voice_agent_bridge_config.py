@@ -2,6 +2,7 @@ from app.agents.state import OrderLineDraft, get_or_create, reset
 from app.infrastructure.config import settings
 from app.integrations.voice_agent_bridge import (
     _GREETING,
+    _LISTEN_KEYTERMS,
     _build_settings,
     _greeting_for,
     is_voice_agent_bridge_ready,
@@ -57,6 +58,28 @@ def test_voice_agent_bridge_settings_encode_customer_phone_in_proxy_url():
             "https://agentos.example.com/api/v1/agent-llm-proxy/call-123/chat/completions"
         )
         assert "customer_phone=%2B51987654321" in proxy_url
+    finally:
+        _restore_settings(snapshot)
+
+
+def test_settings_send_keyterms_to_boost_menu_vocabulary():
+    # Palabras del menu que ya generaron un pedido mal entendido en una
+    # llamada real ("Mostro" -> "monstruo", "Yape" -> "yate", "Plin" ->
+    # "pli", "Chaufa" -> "Chaupa") deben ir en listen.provider.keyterms
+    # -- ver https://developers.deepgram.com/docs/keyterm.
+    snapshot = _snapshot_settings()
+    try:
+        settings.voice_agent_bridge_enabled = True
+        settings.media_streaming_enabled = True
+        settings.public_base_url = "https://agentos.example.com"
+        settings.deepgram_api_key = "test-key"
+
+        bridge_settings = _build_settings("call-123", "+51987654321")
+        keyterms = bridge_settings["agent"]["listen"]["provider"]["keyterms"]
+
+        assert keyterms is _LISTEN_KEYTERMS
+        for expected in ("Mostro", "Yape", "Plin", "Chaufa", "Olivar"):
+            assert expected in keyterms
     finally:
         _restore_settings(snapshot)
 

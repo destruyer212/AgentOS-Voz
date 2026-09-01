@@ -75,6 +75,34 @@ _SPEAK_MODEL = "aura-2-celeste-es"
 # sesgar la deteccion -- no probado todavia, quedaria para una sesion
 # dedicada a validarlo antes de ponerlo en una llamada real de nuevo.
 _LISTEN_MODEL = "nova-3"
+# Keyterm Prompting de Deepgram (nova-3): vocabulario que el modelo no
+# reconoce bien por defecto porque son palabras poco comunes en español
+# general -- confirmado en vivo, cada uno de estos genero un pedido mal
+# entendido real ("Mostro" -> "monstruo", "Yape" -> "yate", "Plin" -> "pli",
+# "Chaufa" -> "Chaupa"). El resto de la lista son terminos propios del
+# menu (nombres de plato, "Olivar" del nombre del restaurante) con la
+# misma logica preventiva. Documentado en
+# https://developers.deepgram.com/docs/keyterm -- 20 a 50 terminos
+# recomendados, este set se queda bien por debajo de eso a proposito.
+_LISTEN_KEYTERMS = [
+    "El Olivar Grill",
+    "Olivar",
+    "Mostro",
+    "Huayrito",
+    "Huayro",
+    "Ricky",
+    "Anticucho",
+    "Anticuchos",
+    "Chaufa",
+    "Mollejitas",
+    "Huancaina",
+    "Pausterizado",
+    "Churrasco",
+    "Costillar",
+    "Chicharron",
+    "Yape",
+    "Plin",
+]
 _GREETING = f"Hola, buenas, bienvenido a {settings.restaurant_name}. ¿Qué te provoca pedir hoy?"
 
 
@@ -215,7 +243,9 @@ def _build_settings(call_control_id: str, customer_phone: str | None) -> dict:
             # idioma explicitamente -- sin esto, nova-3 puede tambien
             # desviar a deteccion automatica. Confirmado contra la API real.
             "language": "es",
-            "listen": {"provider": {"type": "deepgram", "model": _LISTEN_MODEL}},
+            "listen": {
+                "provider": {"type": "deepgram", "model": _LISTEN_MODEL, "keyterms": _LISTEN_KEYTERMS}
+            },
             # provider.type="open_ai" + un "endpoint" separado es como
             # Deepgram redirige las llamadas de "think" a un servidor propio
             # en vez del OpenAI real -- confirmado contra la API real
