@@ -23,6 +23,7 @@ from app.ai.base import ParsedItem
 from app.ai.router import ai_router
 from app.ai.rule_based import CANCEL_WORDS, CONFIRM_WORDS, is_audio_repair_message, is_hours_inquiry
 from app.domain.business_hours import business_hours_message
+from app.domain.delivery_zones import delivery_zone_rejection_message
 from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
@@ -375,6 +376,7 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.silence_retries = 0
     state.pending_clarification = None
     state.hangup_after_response = False
+    state.pending_zone_rejection_message = None
 
 
 class AgentRuntime:
@@ -921,7 +923,10 @@ class AgentRuntime:
         missing_detail = self._next_missing_detail(state)
         if missing_detail:
             state.status = f"need_{missing_detail}"
-            return await self._finish(state, _DETAIL_PROMPTS[missing_detail], "order.create", [], tool_calls, None)
+            prompt = _DETAIL_PROMPTS[missing_detail]
+            if missing_detail == "address" and state.pending_zone_rejection_message:
+                prompt = state.pending_zone_rejection_message
+            return await self._finish(state, prompt, "order.create", [], tool_calls, None)
         state.status = "awaiting_confirmation"
         return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
 
@@ -1074,6 +1079,17 @@ class AgentRuntime:
 
         if current == "need_address":
             address = _extract_address(raw_value)
+            # Pedido explicito del negocio: delivery solo cerca de Puente
+            # Piedra, nunca fuera de Lima. Si la direccion da evidencia de
+            # estar fuera de zona, no se guarda -- se deja el mensaje listo
+            # para que _advance_order lo repita en vez de la pregunta
+            # generica de direccion (sigue pidiendola hasta que den una
+            # valida o cambien a recojo en el local).
+            zone_message = delivery_zone_rejection_message(address)
+            if zone_message:
+                state.pending_zone_rejection_message = zone_message
+                return
+            state.pending_zone_rejection_message = None
             state.delivery_address = address
             if state.customer:
                 # Tambien en el snapshot en memoria, no solo en state.delivery_address:
@@ -1101,6 +1117,12 @@ class AgentRuntime:
             for item in state.items
         ]
         total = sum(item.quantity * item.unit_price for item in state.items)
+        # Cobro del motorizado: siempre visible en el resumen hablado, nunca
+        # agregado en silencio -- lo que se dice tiene que ser exactamente
+        # lo que despues se cobra. Solo en delivery, nunca en recojo.
+        if state.fulfillment_type == "delivery":
+            lines.append("1 Delivery")
+            total += settings.delivery_fee_soles
         time_part = f" para las {state.requested_time}" if state.requested_time else ""
 
         if state.fulfillment_type == "delivery":
@@ -1120,6 +1142,28 @@ class AgentRuntime:
         )
 
     async def _confirm_order(self, state: ConversationState, tool_calls: list[ToolCallOut]) -> OrderOut | None:
+        items_context = [
+            {"product_id": item.product_id, "quantity": item.quantity, "notes": item.notes}
+            for item in state.items
+        ]
+        if state.fulfillment_type == "delivery":
+            # El cobro del motorizado tiene que quedar como un item real del
+            # pedido (mismo total que ya se dijo en _build_summary), no solo
+            # sumado aparte -- asi aparece igual en el panel de admin y en el
+            # WhatsApp de confirmacion. "Delivery" es un producto real del
+            # catalogo (ver scripts/ensure_delivery_fee_product.py), no un
+            # cargo inventado sin product_id.
+            delivery_result = await self._call_tool(tool_calls, "products.search", {"query": "Delivery"})
+            delivery_product = next(
+                (p for p in delivery_result.get("products", []) if p["name"] == "Delivery"), None
+            )
+            if delivery_product:
+                items_context.append({"product_id": delivery_product["id"], "quantity": 1, "notes": None})
+            else:
+                logger.warning(
+                    "Producto 'Delivery' no encontrado en el catalogo -- pedido confirmado sin cobro de motorizado."
+                )
+
         context: dict = {
             # .get(), no state.customer["id"]: un cliente sin telefono (chat
             # web sin dar numero, o llamada con ID oculto) que despues da su
@@ -1134,10 +1178,7 @@ class AgentRuntime:
             "delivery_address": state.delivery_address,
             "payment_method": state.payment_method,
             "channel": "whatsapp",  # canal de la notificacion de confirmacion, no el de la conversacion
-            "items": [
-                {"product_id": item.product_id, "quantity": item.quantity, "notes": item.notes}
-                for item in state.items
-            ],
+            "items": items_context,
         }
         engine = WorkflowEngine(self.tools)
         run_result = await engine.run(RESTAURANT_ORDER_FULFILLMENT, context)

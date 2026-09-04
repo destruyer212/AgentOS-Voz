@@ -81,8 +81,10 @@ async def test_scenario_happy_path_delivery_yape():
         assert final.order.status == "confirmed" or final.order.status == "scheduled"
         assert final.order.payment_method == "yape"
         assert final.order.fulfillment_type == "delivery"
+        # "Delivery" (cobro del motorizado) se agrega solo en pedidos por
+        # delivery -- ver AgentRuntime._confirm_order.
         assert {item.product_name for item in final.order.items} == {
-            "Hamburguesa Clasica", "Inca Kola 500ml",
+            "Hamburguesa Clasica", "Inca Kola 500ml", "Delivery",
         }
     finally:
         reset(conversation_id)

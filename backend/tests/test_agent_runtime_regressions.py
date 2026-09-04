@@ -1467,3 +1467,70 @@ async def test_spoken_mas_resolves_against_catalog_plus_sign():
             assert "prefieres" not in turn.response.lower()
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_delivery_rejects_out_of_zone_address_then_accepts_a_nearby_one():
+    # Pedido explicito del negocio: delivery solo cerca de Puente Piedra.
+    # Una direccion fuera de zona no debe guardarse ni pasar a la siguiente
+    # pregunta -- tiene que repetir explicando el limite, no el generico
+    # "cual es la direccion".
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "delivery"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="Av. Larco 123, Miraflores", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_address"  # no avanzo
+            assert state.delivery_address is None
+            assert "Puente Piedra" in rejected.response
+
+            accepted = await runtime.handle_turn(
+                AgentMessageIn(message="Jr. Los Alamos 456, Comas", conversation_id=conversation_id)
+            )
+            assert accepted.status == "need_payment"  # esta vez si avanzo
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.delivery_address == "Jr. Los Alamos 456, Comas"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_delivery_fee_charged_only_on_delivery_not_pickup():
+    # El cobro del motorizado (S/10 por defecto) tiene que aparecer en el
+    # resumen hablado Y en el pedido real cuando es delivery, y no
+    # aparecer para nada cuando es recojo en el local.
+    delivery_id = _conversation_id()
+    pickup_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Quiero una hamburguesa clasica", "Carlos", "delivery",
+                "Jr. Los Alamos 456, Comas", "efectivo",
+            ):
+                turn = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=delivery_id))
+            assert "Delivery" in turn.response  # resumen final, antes de "Confirmas?"
+
+            confirm = await runtime.handle_turn(AgentMessageIn(message="Sí, confirmo", conversation_id=delivery_id))
+            assert {item.product_name for item in confirm.order.items} >= {"Hamburguesa Clasica", "Delivery"}
+            assert confirm.order.total == 12.90 + settings.delivery_fee_soles
+
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                turn = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=pickup_id))
+            assert "Delivery" not in turn.response
+
+            confirm = await runtime.handle_turn(AgentMessageIn(message="Sí, confirmo", conversation_id=pickup_id))
+            assert {item.product_name for item in confirm.order.items} == {"Hamburguesa Clasica"}
+            assert confirm.order.total == 12.90
+    finally:
+        reset(delivery_id)
+        reset(pickup_id)

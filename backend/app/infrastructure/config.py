@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     business_hours_open: str = "12:00"
     business_hours_close: str = "23:00"
     business_timezone: str = "America/Lima"
+    # Cobro fijo del motorizado quando el pedido es delivery (nunca en
+    # recojo en el local). Unica fuente de verdad: tambien es el precio del
+    # producto "Delivery" real en el catalogo (ver
+    # scripts/ensure_delivery_fee_product.py) -- se mantienen sincronizados
+    # a mano, no hay una relacion de FK que lo garantice solo.
+    delivery_fee_soles: float = 10.0
     llm_provider: str = "rule_based"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"

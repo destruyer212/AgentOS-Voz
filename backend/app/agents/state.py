@@ -66,6 +66,12 @@ class ConversationState:
     # de status=="closed" a proposito -- ese mismo status tambien se usa
     # para handoff, y ahi colgar seria mucho peor que no colgar.
     hangup_after_response: bool = False
+    # Direccion de delivery rechazada por estar fuera de zona (ver
+    # domain/delivery_zones.py) -- guarda el mensaje explicandolo para que
+    # AgentRuntime._advance_order lo repita en vez del generico "¿cual es la
+    # direccion?" cuando vuelve a preguntar. None si la ultima direccion
+    # dada (si hubo alguna) fue aceptada o si todavia no se pidio ninguna.
+    pending_zone_rejection_message: str | None = None
 
 
 _STORE: dict[str, ConversationState] = {}

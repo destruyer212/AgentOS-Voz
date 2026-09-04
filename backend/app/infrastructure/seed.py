@@ -60,6 +60,26 @@ async def seed_demo_data() -> None:
                     InventoryItem(tenant_id=tenant.id, product_id=product.id, quantity=stock, reserved=0)
                 )
 
+        # Producto real para el cobro del motorizado (ver
+        # AgentRuntime._confirm_order): precio atado a settings.delivery_fee_soles,
+        # no a un literal aparte -- si el cobro cambia, esto cambia solo.
+        # Stock alto a proposito, es un cargo de servicio, no algo que se
+        # pueda "agotar".
+        if "DELIVERY-FEE" not in existing_skus:
+            delivery_product = Product(
+                tenant_id=tenant.id,
+                sku="DELIVERY-FEE",
+                name="Delivery",
+                description="Cobro del motorizado, solo para pedidos por delivery.",
+                price=settings.delivery_fee_soles,
+                category="servicio",
+            )
+            session.add(delivery_product)
+            await session.flush()
+            session.add(
+                InventoryItem(tenant_id=tenant.id, product_id=delivery_product.id, quantity=999999, reserved=0)
+            )
+
         existing_customer = await session.scalar(
             select(Customer).where(Customer.tenant_id == tenant.id, Customer.phone == "+51999999999")
         )
