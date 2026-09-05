@@ -472,7 +472,11 @@ class OrderService:
         order = await self.session.get(Order, order_id)
         if order and order.tenant_id == self.tenant_id:
             order.whatsapp_status = status
-            order.whatsapp_sent_at = datetime.now(UTC)
+            # .replace(tzinfo=None): la columna es TIMESTAMP WITHOUT TIME
+            # ZONE (Postgres) -- asyncpg rechaza un datetime "aware" ahi
+            # ("can't subtract offset-naive and offset-aware datetimes").
+            # Bug real, visto en produccion nada mas desplegar esto.
+            order.whatsapp_sent_at = datetime.now(UTC).replace(tzinfo=None)
             await self.session.commit()
 
     async def get(self, order_id: int) -> OrderOut:
