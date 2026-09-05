@@ -82,6 +82,87 @@ _FACTURA_REQUEST_PHRASES = ("factura", "con ruc", "facturar", "a nombre de mi em
 _DNI_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")
 _RUC_RE = re.compile(r"(?<!\d)(\d{11})(?!\d)")
 
+# Bug real, visto en vivo: al pedir el DNI, la gente en Peru casi nunca
+# dicta 8 digitos seguidos como numero unico -- lo dice en grupos hablados
+# ("Setenta, ochenta y uno, treinta y uno, cincuenta y dos" -> 70-81-31-52)
+# o digito por digito ("Siete cero ocho uno tres uno cinco dos"). Deepgram
+# transcribe esos numeros como PALABRAS, no como digitos, asi que
+# _DNI_RE/_RUC_RE (que solo buscan caracteres 0-9) nunca los reconocian --
+# la llamada real terminaba colgada en un loop pidiendo el DNI de nuevo y
+# de nuevo sin exito. _spoken_digit_groups() convierte cada palabra-numero
+# (0-99) a su valor y las junta en orden para formar el numero completo,
+# sin importar en que agrupacion las haya dicho el cliente.
+_SPANISH_UNITS = {
+    "cero": "0", "uno": "1", "una": "1", "dos": "2", "tres": "3", "cuatro": "4",
+    "cinco": "5", "seis": "6", "siete": "7", "ocho": "8", "nueve": "9",
+}
+_SPANISH_TEENS = {
+    "diez": "10", "once": "11", "doce": "12", "trece": "13", "catorce": "14",
+    "quince": "15", "dieciseis": "16", "diecisiete": "17", "dieciocho": "18",
+    "diecinueve": "19",
+}
+_SPANISH_TWENTIES_FUSED = {
+    "veintiuno": "21", "veintidos": "22", "veintitres": "23", "veinticuatro": "24",
+    "veinticinco": "25", "veintiseis": "26", "veintisiete": "27", "veintiocho": "28",
+    "veintinueve": "29",
+}
+_SPANISH_TENS = {
+    "veinte": 20, "treinta": 30, "cuarenta": 40, "cincuenta": 50,
+    "sesenta": 60, "setenta": 70, "ochenta": 80, "noventa": 90,
+}
+
+
+def _spoken_digit_groups(text: str) -> str:
+    """Concatena, en orden, cada numero (0-99) encontrado en `text` -- ya
+    sea escrito en digitos ("81") o dicho en palabras ("ochenta y uno") --
+    ignorando cualquier otra palabra (comas, "y" de conexion, "mi dni es",
+    etc). Solo cubre 0-99 a proposito: un DNI/RUC nunca se dicta con
+    "cientos"/"miles", siempre en grupos de 1-2 digitos."""
+    tokens = normalize_text(text).split()
+    groups: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.isdigit():
+            groups.append(token)
+            i += 1
+        elif token in _SPANISH_TWENTIES_FUSED:
+            groups.append(_SPANISH_TWENTIES_FUSED[token])
+            i += 1
+        elif token in _SPANISH_TENS:
+            if i + 2 < len(tokens) and tokens[i + 1] == "y" and tokens[i + 2] in _SPANISH_UNITS:
+                groups.append(str(_SPANISH_TENS[token] + int(_SPANISH_UNITS[tokens[i + 2]])))
+                i += 3
+            else:
+                groups.append(str(_SPANISH_TENS[token]))
+                i += 1
+        elif token in _SPANISH_TEENS:
+            groups.append(_SPANISH_TEENS[token])
+            i += 1
+        elif token in _SPANISH_UNITS:
+            groups.append(_SPANISH_UNITS[token])
+            i += 1
+        else:
+            i += 1
+    return "".join(groups)
+
+
+def _extract_id_number(raw_value: str, expected_length: int) -> str | None:
+    """DNI (8 digitos) o RUC (11 digitos) desde una respuesta hablada.
+    Primero intenta el caso simple (el STT ya entrego digitos seguidos);
+    si no calza, intenta reconstruir el numero a partir de palabras
+    habladas (ver _spoken_digit_groups). None si ninguna de las dos formas
+    da exactamente la cantidad de digitos esperada -- nunca se acepta un
+    numero mas largo o mas corto solo porque "se parece"."""
+    direct = _DNI_RE if expected_length == 8 else _RUC_RE
+    match = direct.search(raw_value)
+    if match:
+        return match.group(1)
+    spoken = _spoken_digit_groups(raw_value)
+    if len(spoken) == expected_length:
+        return spoken
+    return None
+
 # Categorias del menu y palabras que el cliente usa para referirse a ellas,
 # para responder preguntas tipo "¿hay algo para tomar?" con las opciones
 # reales de esa categoria en vez de un "no encontre" generico.
@@ -220,7 +301,11 @@ def _match_payment(lowered: str) -> str | None:
 def _match_invoice_document_type(lowered: str) -> str | None:
     if any(k in lowered for k in ("factura", "ruc", "empresa", "razon social", "razón social")):
         return "factura"
-    if any(k in lowered for k in ("boleta", "dni")):
+    # Bug real, visto en vivo: el STT transcribio "Boleta" como "Boleto"
+    # (palabra real y mucho mas comun, "boleto de avion/cine") -- sonido
+    # casi identico por telefono. Sin este alias, el cliente tenia que
+    # repetir "boleta" una segunda vez para que se reconociera.
+    if any(k in lowered for k in ("boleta", "boleto", "dni")):
         return "boleta"
     return None
 
@@ -1354,9 +1439,9 @@ class AgentRuntime:
             if document_type == "boleta":
                 state.factura_ruc = None
                 state.factura_razon_social = None
-                match = _DNI_RE.search(raw_value)
-                if match:
-                    state.boleta_dni = match.group(1)
+                dni = _extract_id_number(raw_value, 8)
+                if dni:
+                    state.boleta_dni = dni
                     state.pending_dni_rejection_message = None
                     if state.customer:
                         state.customer["doc_type"] = "1"
@@ -1369,9 +1454,9 @@ class AgentRuntime:
                             await self.session.commit()
             else:
                 state.boleta_dni = None
-                match = _RUC_RE.search(raw_value)
-                if match:
-                    state.factura_ruc = match.group(1)
+                ruc = _extract_id_number(raw_value, 11)
+                if ruc:
+                    state.factura_ruc = ruc
                     state.factura_razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
                     state.pending_ruc_rejection_message = None
                     if state.customer:
@@ -1386,13 +1471,12 @@ class AgentRuntime:
             return
 
         if current == "need_dni":
-            match = _DNI_RE.search(raw_value)
-            if not match:
+            dni = _extract_id_number(raw_value, 8)
+            if not dni:
                 state.pending_dni_rejection_message = (
                     "No reconocí un DNI válido. Para boleta son exactamente 8 dígitos. ¿Me lo repites?"
                 )
                 return
-            dni = match.group(1)
             state.invoice_document_type = "boleta"
             state.wants_factura = False
             state.boleta_dni = dni
@@ -1413,32 +1497,35 @@ class AgentRuntime:
             # Se arrepintio y prefiere boleta -- vuelve al flujo normal sin
             # trabarse pidiendo un RUC que ya no quiere dar; en voz igual se
             # pedira el DNI obligatorio de la boleta.
-            if "boleta" in lowered and not _RUC_RE.search(raw_value):
+            if "boleta" in lowered and not _extract_id_number(raw_value, 11):
                 state.invoice_document_type = "boleta"
                 state.wants_factura = False
                 state.pending_ruc_rejection_message = None
-                match = _DNI_RE.search(raw_value)
-                if match:
-                    state.boleta_dni = match.group(1)
+                dni = _extract_id_number(raw_value, 8)
+                if dni:
+                    state.boleta_dni = dni
                     state.pending_dni_rejection_message = None
                 return
-            match = _RUC_RE.search(raw_value)
-            if not match:
+            ruc = _extract_id_number(raw_value, 11)
+            if not ruc:
                 state.pending_ruc_rejection_message = (
                     "No reconocí un RUC válido. Para factura son exactamente 11 dígitos. ¿Me lo repites, o prefieres boleta?"
                 )
                 return
-            ruc = match.group(1)
             # La razon social es lo que sobra del mensaje despues de sacar
             # el RUC y palabras de relleno tipicas ("es", "el ruc es", etc).
-            # Conservador a proposito: si no queda nada util, se usa el
+            # Conservador a proposito: si no queda nada util (o si el RUC se
+            # reconocio a partir de numeros hablados, donde no hay un
+            # substring literal que restar sin dejar basura), se usa el
             # nombre que ya dio el cliente en vez de inventar una razon
             # social vacia (factura sin razon social no es valida).
-            razon_social = _RUC_RE.sub("", raw_value)
-            razon_social = re.sub(
-                r"\b(el\s+ruc\s+es|ruc|es|y|razon\s+social|la\s+razon\s+social\s+es)\b", "", razon_social,
-                flags=re.IGNORECASE,
-            ).strip(" ,.-")
+            razon_social = ""
+            if _RUC_RE.search(raw_value):
+                razon_social = _RUC_RE.sub("", raw_value)
+                razon_social = re.sub(
+                    r"\b(el\s+ruc\s+es|ruc|es|y|razon\s+social|la\s+razon\s+social\s+es)\b", "", razon_social,
+                    flags=re.IGNORECASE,
+                ).strip(" ,.-")
             if not razon_social:
                 razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
             state.invoice_document_type = "factura"

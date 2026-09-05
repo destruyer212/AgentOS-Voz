@@ -1887,3 +1887,103 @@ async def test_web_channel_never_asks_for_document_type_or_dni():
             assert state.boleta_dni is None
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_boleto_is_understood_as_boleta():
+    # Bug real, visto en vivo: el STT transcribio "Boleta" como "Boleto"
+    # (palabra real y mucho mas comun) -- el cliente tuvo que repetirlo.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Boleto.", conversation_id=conversation_id, channel="phone")
+            )
+            assert turn.status == "need_dni"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_dni_recognized_from_grouped_spoken_numbers():
+    # Bug real, visto en vivo: una llamada real termino colgada porque el
+    # cliente dicto su DNI en grupos de dos digitos, como se hace
+    # normalmente por telefono en Peru -- "Setenta, ochenta y uno, treinta
+    # y uno, cincuenta y dos" (70-81-31-52 -> DNI 70813152). El regex viejo
+    # solo buscaba digitos ya escritos (0-9), nunca reconocia numeros
+    # dichos en palabras, y la llamada quedo pidiendo el DNI en loop hasta
+    # que colgaron sin completar el pedido.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo", "boleta"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Setenta, ochenta y uno, treinta y uno, cincuenta y dos.",
+                    conversation_id=conversation_id, channel="phone",
+                )
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.boleta_dni == "70813152"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_dni_recognized_from_individually_spoken_digits():
+    # Mismo DNI real (70813152) que el test anterior, pero dictado digito
+    # por digito -- la otra forma en que la misma llamada real lo intento
+    # decir despues de que el primer intento fallara.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo", "boleta"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Siete cero ocho uno tres uno cinco dos.",
+                    conversation_id=conversation_id, channel="phone",
+                )
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.boleta_dni == "70813152"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_ruc_recognized_from_spoken_numbers():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo", "factura"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            # 20601234567 dicho en grupos de dos.
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="veinte, sesenta, doce, treinta y cuatro, cincuenta y seis, siete.",
+                    conversation_id=conversation_id, channel="phone",
+                )
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_ruc == "20601234567"
+    finally:
+        reset(conversation_id)
