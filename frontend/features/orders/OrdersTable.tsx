@@ -217,7 +217,6 @@ function OrderDetail({ order }: { order: OrderOut }) {
 const initialState: UpdateOrderStatusState = {};
 
 function OrderStatusForm({ order }: { order: OrderOut }) {
-  const [state, formAction, isPending] = useActionState(updateOrderStatusAction, initialState);
   const actions = getNextActions(order);
 
   if (TERMINAL_STATUSES.includes(order.status as OrderStatus)) {
@@ -225,27 +224,41 @@ function OrderStatusForm({ order }: { order: OrderOut }) {
   }
 
   return (
-    <form action={formAction} className="space-y-2">
+    <div className="flex flex-col gap-2">
+      {actions.map((action) => (
+        <OrderStatusButton key={action.status} order={order} action={action} />
+      ))}
+    </div>
+  );
+}
+
+// Bug real, visto en vivo: con varios botones "submit" (nombre/valor
+// distinto cada uno) dentro de UN SOLO <form>, el estado que React arma al
+// llamar a la Server Action no siempre incluye cual boton disparo el
+// envio -- "status" llegaba vacio y el servidor respondia "Datos
+// inválidos." sin importar cual boton se apretara. Cada boton con su
+// propio <form> (y su propio useActionState) elimina esa ambiguedad por
+// completo: el valor de "status" queda fijo en un input oculto, no
+// depende de cual boton disparo el submit.
+function OrderStatusButton({ order, action }: { order: OrderOut; action: NextAction }) {
+  const [state, formAction, isPending] = useActionState(updateOrderStatusAction, initialState);
+  const Icon = action.icon;
+
+  return (
+    <form action={formAction}>
       <input type="hidden" name="id" value={order.id} />
-      <div className="flex flex-col gap-2">
-        {actions.map((action) => {
-          const Icon = action.icon;
-          return (
-            <button
-              key={action.status}
-              type="submit"
-              name="status"
-              value={action.status}
-              disabled={isPending}
-              className={action.tone === "danger" ? "btn-secondary w-full text-accent-rose" : "btn-primary w-full"}
-            >
-              <Icon size={14} />
-              {isPending ? "Actualizando…" : action.label}
-            </button>
-          );
-        })}
-      </div>
-      {state.error && <p className="text-xs text-accent-rose">{state.error}</p>}
+      <input type="hidden" name="status" value={action.status} />
+      <button
+        type="submit"
+        disabled={isPending}
+        className={
+          action.tone === "danger" ? "btn-secondary w-full text-accent-rose" : "btn-primary w-full"
+        }
+      >
+        <Icon size={14} />
+        {isPending ? "Actualizando…" : action.label}
+      </button>
+      {state.error && <p className="mt-1 text-xs text-accent-rose">{state.error}</p>}
     </form>
   );
 }
