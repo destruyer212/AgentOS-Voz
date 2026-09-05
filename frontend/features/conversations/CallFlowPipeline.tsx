@@ -1,17 +1,21 @@
 "use client";
 
 import {
+  Bike,
   CheckCircle2,
+  ChefHat,
   CircleDashed,
   ClipboardList,
   Database,
   GitBranch,
   MapPin,
+  PackageCheck,
   PhoneCall,
   PhoneOff,
   Route,
   ShieldCheck,
   ShoppingCart,
+  Store,
   UserRound,
   Wallet,
   Workflow,
@@ -26,6 +30,11 @@ import {
   paymentMethodLabel,
 } from "@/lib/format";
 import type { OrderOut } from "@/lib/types";
+
+// Estados de pedido que ya no avanzan mas (ver
+// backend/app/domain/services.py, _ORDER_STATUS_TRANSITIONS): una vez aca,
+// el tramo cocina->motorizado->entregado del grafo deja de "viajar".
+const ORDER_TERMINAL_STATUSES = new Set(["delivered", "cancelled", "failed"]);
 
 const DETAIL_COPY: Record<string, { label: string; waiting: string }> = {
   collecting: {
@@ -64,16 +73,21 @@ const DETAIL_STEPS = [
 
 // Geometria fija del grafo tipo n8n: 4 nodos en linea + una bifurcacion final
 // (como el nodo "If" del workflow) hacia "pedido creado" (si) o "cierre sin
-// pedido" (no). Coordenadas fijas -> el SVG de conectores no necesita medir
-// el DOM, igual que el min-width fijo que ya usaba este panel antes.
+// pedido" (no). Si el pedido se creo, la rama "si" sigue 3 nodos mas
+// (cocina -> motorizado/recojo -> entregado, el mismo pipeline del panel de
+// Pedidos) -- ese tramo solo se dibuja cuando hay pedido; sin pedido el
+// grafo queda igual que antes. Coordenadas fijas -> el SVG de conectores no
+// necesita medir el DOM, igual que el min-width fijo que ya usaba este
+// panel antes.
 const VIEW_W = 1180;
+const VIEW_W_WITH_FULFILLMENT = 1870;
 const VIEW_H = 340;
 const NODE = 68; // lado del cuadro-icono, como los nodos de n8n
 const HALF = NODE / 2;
 const ROW_Y = 150;
 const BRANCH_TOP_Y = 55;
 const BRANCH_BOTTOM_Y = 245;
-const CENTERS = { n1: 110, n2: 340, n3: 570, n4: 800, n5: 1030 };
+const CENTERS = { n1: 110, n2: 340, n3: 570, n4: 800, n5: 1030, n6: 1260, n7: 1490, n8: 1720 };
 
 interface GraphNode {
   key: string;
@@ -119,6 +133,36 @@ export function CallFlowPipeline({
   const finalReached = currentIndex >= 4;
   const successTaken = finalReached && !isEnded;
   const failureTaken = finalReached && isEnded;
+
+  // Tramo de cumplimiento (cocina -> motorizado/recojo -> entregado), el
+  // mismo pipeline real que maneja el panel de Pedidos (ver
+  // backend/app/domain/services.py, _ORDER_STATUS_TRANSITIONS). Solo se
+  // dibuja si el pedido se llego a crear; sigue avanzando aunque la llamada
+  // ya haya terminado, porque cocina/motorizado trabajan despues de colgar.
+  // Escala -1..2: -1 = pedido creado, esperando que cocina lo acepte;
+  // 0 = cocina preparandolo; 1 = salio con el motorizado / listo para
+  // recoger; 2 = entregado (fin del pipeline). null/otro estado
+  // (cancelado, fallido) = no aplica, no se sigue dibujando el avance.
+  const showFulfillment = successTaken;
+  const isDelivery = order?.fulfillment_type === "delivery";
+  const fulfillmentStageIndex: -1 | 0 | 1 | 2 | null = (() => {
+    if (!order) return null;
+    switch (order.status) {
+      case "confirmed":
+      case "scheduled":
+        return -1;
+      case "preparing":
+        return 0;
+      case "ready":
+      case "dispatched":
+        return 1;
+      case "delivered":
+        return 2;
+      default:
+        return null; // cancelado/fallido/etc -- no seguimos avanzando aca
+    }
+  })();
+  const orderIsLive = showFulfillment && order != null && !ORDER_TERMINAL_STATUSES.has(order.status);
 
   const nodes: GraphNode[] = [
     {
@@ -172,6 +216,63 @@ export function CallFlowPipeline({
     icon: PhoneOff,
   };
 
+  // Umbral de "reached" (checkmark) de cada nodo en la escala -1..2 de
+  // fulfillmentStageIndex: Cocina esta reached en cuanto entra a preparar
+  // (0+), Motorizado/Recojo en cuanto sale/esta listo (1+), Entregado solo
+  // al llegar (2). "current" (glow activo) es el nodo que todavia no paso
+  // ese umbral pero es el siguiente en la fila.
+  const stageIdx = fulfillmentStageIndex;
+  const kitchenReached = stageIdx !== null && stageIdx >= 0;
+  const kitchenCurrent = orderIsLive && stageIdx === -1;
+  const dispatchReached = stageIdx !== null && stageIdx >= 1;
+  const dispatchCurrent = orderIsLive && stageIdx === 0;
+  const deliveredReached = stageIdx !== null && stageIdx >= 2;
+
+  const fulfillmentNodes: GraphNode[] = [
+    {
+      key: "n6",
+      cx: CENTERS.n6,
+      cy: BRANCH_TOP_Y,
+      title: "Cocina",
+      subtitle: kitchenReached ? "aceptó el pedido" : "por aceptar",
+      icon: ChefHat,
+    },
+    {
+      key: "n7",
+      cx: CENTERS.n7,
+      cy: BRANCH_TOP_Y,
+      title: isDelivery ? "Motorizado" : "Recojo en local",
+      subtitle: isDelivery ? "salió a entregar" : "listo para recoger",
+      icon: isDelivery ? Bike : Store,
+    },
+    {
+      key: "n8",
+      cx: CENTERS.n8,
+      cy: BRANCH_TOP_Y,
+      title: "Entregado",
+      subtitle: "pedido cerrado",
+      icon: PackageCheck,
+    },
+  ];
+  // origin nodes de cada tramo: successNode -> n6 -> n7 -> n8. El "traveled"
+  // de cada tramo es el "reached" del nodo al que llega.
+  const fulfillmentOrigins = [successNode, ...fulfillmentNodes];
+  const fulfillmentReachedByTarget = [kitchenReached, dispatchReached, deliveredReached];
+  const fulfillmentEdges = [0, 1, 2].map((i) => {
+    const from = fulfillmentOrigins[i]!;
+    const to = fulfillmentOrigins[i + 1]!;
+    const traveled = fulfillmentReachedByTarget[i]!;
+    // El tramo que "esta viajando" es el que lleva al proximo nodo sin
+    // pasar todavia -- el mismo que esta en estado "current".
+    const flowing = orderIsLive && ((i === 0 && kitchenCurrent) || (i === 1 && dispatchCurrent));
+    return {
+      key: `fedge-${i}`,
+      d: `M${from.cx + HALF},${from.cy} L${to.cx - HALF},${to.cy}`,
+      traveled,
+      flowing,
+    };
+  });
+
   // i = indice del nodo de origen (0..2) -> conecta nodes[i] con nodes[i+1]
   const mainEdges = [0, 1, 2].map((i) => {
     const from = nodes[i]!;
@@ -189,10 +290,16 @@ export function CallFlowPipeline({
   const toSuccess = `M${CENTERS.n4 + HALF},${ROW_Y} C ${CENTERS.n4 + 116},${ROW_Y} ${CENTERS.n5 - 116},${BRANCH_TOP_Y} ${CENTERS.n5 - HALF},${BRANCH_TOP_Y}`;
   const toFailure = `M${CENTERS.n4 + HALF},${ROW_Y} C ${CENTERS.n4 + 116},${ROW_Y} ${CENTERS.n5 - 116},${BRANCH_BOTTOM_Y} ${CENTERS.n5 - HALF},${BRANCH_BOTTOM_Y}`;
   const branchFlowing = isLive && currentIndex === 3;
+  const viewW = showFulfillment ? VIEW_W_WITH_FULFILLMENT : VIEW_W;
+
+  // El panel sigue "en vivo" mientras la llamada este abierta O el pedido
+  // siga en curso (cocina/motorizado trabajando despues de colgar) -- ver
+  // orderIsLive arriba.
+  const panelIsLive = isLive || orderIsLive;
 
   return (
-    <HudPanel className="overflow-hidden p-5" glow={isLive}>
-      {isLive && (
+    <HudPanel className="overflow-hidden p-5" glow={panelIsLive}>
+      {panelIsLive && (
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-hud-500/0 via-hud-500/[0.06] to-hud-500/0" />
       )}
 
@@ -206,16 +313,16 @@ export function CallFlowPipeline({
           </div>
           <h2 className="mt-2 text-xl font-semibold text-white">Ruta operativa del cliente</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Cada nodo es una decision real del agente; la señal viaja por el conector activo mientras la llamada sigue abierta.
+            Cada nodo es una decision real del agente; la señal viaja por el conector activo mientras la llamada o el pedido siguen en curso.
           </p>
         </div>
-        {isLive ? (
+        {panelIsLive ? (
           <span className="inline-flex items-center gap-1.5 rounded border border-hud-500/30 bg-hud-500/10 px-2.5 py-1.5 font-mono text-xs font-medium uppercase tracking-wide text-hud-300">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-hud-400 opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-hud-400" />
             </span>
-            En vivo
+            {isLive ? "En vivo" : "Pedido en curso"}
           </span>
         ) : (
           <span className="rounded border border-surface-600 bg-surface-800 px-2.5 py-1.5 font-mono text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -226,10 +333,10 @@ export function CallFlowPipeline({
 
       <div className="relative grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_310px]">
         <div className="relative overflow-x-auto rounded-lg border border-surface-800/80 bg-[radial-gradient(circle,rgba(77,216,240,0.06)_1px,transparent_1px)] bg-[length:22px_22px] pb-1">
-          <div className="relative" style={{ width: VIEW_W, height: VIEW_H }}>
+          <div className="relative" style={{ width: viewW, height: VIEW_H }}>
             <svg
-              viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-              width={VIEW_W}
+              viewBox={`0 0 ${viewW} ${VIEW_H}`}
+              width={viewW}
               height={VIEW_H}
               className="absolute inset-0"
               aria-hidden
@@ -283,6 +390,33 @@ export function CallFlowPipeline({
               <circle cx={CENTERS.n5 - HALF} cy={BRANCH_TOP_Y} r={3} fill={successTaken ? "#2dd4bf" : "#343c52"} />
               <circle cx={CENTERS.n5 - HALF} cy={BRANCH_BOTTOM_Y} r={3} fill={failureTaken ? "#f4667c" : "#343c52"} />
 
+              {showFulfillment &&
+                fulfillmentEdges.map((edge, i) => (
+                  <g key={edge.key}>
+                    <path
+                      d={edge.d}
+                      fill="none"
+                      stroke={edge.traveled ? "#2dd4bf" : "#252b3b"}
+                      strokeWidth={2.5}
+                      strokeLinecap="round"
+                      className={edge.flowing ? "hud-flow-edge-active" : ""}
+                      opacity={edge.traveled ? 0.9 : 0.7}
+                    />
+                    <circle
+                      cx={fulfillmentOrigins[i]!.cx + HALF}
+                      cy={fulfillmentOrigins[i]!.cy}
+                      r={3}
+                      fill={edge.traveled ? "#2dd4bf" : "#343c52"}
+                    />
+                    <circle
+                      cx={fulfillmentOrigins[i + 1]!.cx - HALF}
+                      cy={fulfillmentOrigins[i + 1]!.cy}
+                      r={3}
+                      fill={edge.traveled ? "#2dd4bf" : "#343c52"}
+                    />
+                  </g>
+                ))}
+
               <text
                 x={(CENTERS.n4 + CENTERS.n5) / 2 + 10}
                 y={BRANCH_TOP_Y - 12}
@@ -317,6 +451,19 @@ export function CallFlowPipeline({
             ))}
             <FlowNodeCard node={successNode} reached={successTaken} current={false} tone="success" dim={finalReached && !successTaken} />
             <FlowNodeCard node={failureNode} reached={failureTaken} current={false} tone="failure" dim={finalReached && !failureTaken} />
+
+            {showFulfillment && (
+              <>
+                <FlowNodeCard node={fulfillmentNodes[0]!} reached={kitchenReached} current={kitchenCurrent} />
+                <FlowNodeCard node={fulfillmentNodes[1]!} reached={dispatchReached} current={dispatchCurrent} />
+                <FlowNodeCard
+                  node={fulfillmentNodes[2]!}
+                  reached={deliveredReached}
+                  current={false}
+                  tone="success"
+                />
+              </>
+            )}
           </div>
         </div>
 

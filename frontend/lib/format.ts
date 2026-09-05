@@ -34,6 +34,7 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   confirmed: "Confirmado",
   preparing: "En preparación",
   ready: "Listo",
+  dispatched: "En camino",
   scheduled: "Programado",
   delivered: "Entregado",
   cancelled: "Cancelado",

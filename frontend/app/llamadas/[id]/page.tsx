@@ -33,10 +33,16 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
   }
 
   const isActive = convo.status === "active";
+  // Sigue refrescando en vivo aunque la llamada ya haya colgado, mientras
+  // el pedido todavia se este preparando/despachando -- cocina y el
+  // motorizado trabajan despues de que termina la llamada (ver
+  // CallFlowPipeline, que dibuja ese tramo con el mismo order.status).
+  const ORDER_TERMINAL_STATUSES = ["delivered", "cancelled", "failed"];
+  const isOrderActive = Boolean(convo.order && !ORDER_TERMINAL_STATUSES.includes(convo.order.status));
 
   return (
     <div>
-      <LiveRefresher active={isActive} intervalMs={2000} />
+      <LiveRefresher active={isActive || isOrderActive} intervalMs={isActive ? 2000 : 4000} />
       <BackLink />
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # scripts/ensure_delivery_fee_product.py) -- se mantienen sincronizados
     # a mano, no hay una relacion de FK que lo garantice solo.
     delivery_fee_soles: float = 10.0
+    # Tiempo estimado que se le dice al cliente por WhatsApp cuando el
+    # pedido sale con el motorizado (ver app/integrations/wsp_notifications.py,
+    # notify_order_dispatched). Texto libre a proposito -- se manda tal cual
+    # dentro del mensaje ("Llegada estimada: <esto>").
+    delivery_eta_label: str = "30 min"
     llm_provider: str = "rule_based"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.5-flash-lite"

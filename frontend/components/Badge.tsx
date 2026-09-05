@@ -8,6 +8,7 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
   confirmed: "bg-accent-teal/15 text-accent-teal",
   preparing: "bg-brand-500/15 text-brand-400",
   ready: "bg-brand-500/15 text-brand-400",
+  dispatched: "bg-accent-amber/15 text-accent-amber",
   scheduled: "bg-accent-teal/15 text-accent-teal",
   delivered: "bg-emerald-500/15 text-emerald-400",
   cancelled: "bg-surface-700 text-slate-400",

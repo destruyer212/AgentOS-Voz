@@ -56,15 +56,16 @@ export interface OrderOut {
   items: OrderItemOut[];
 }
 
-// Superset del roadmap (docs/05-modelo-dominio.md); el backend hoy solo
-// produce "confirmed"/"scheduled", el resto queda listo para cuando el
-// dominio los emita (preparing/ready/delivered/etc).
+// Flujo real cocina -> motorizado -> entregado (ver panel de Pedidos y
+// backend/app/domain/services.py, _ORDER_STATUS_TRANSITIONS -- unica fuente
+// de verdad de que salto es valido desde cada estado).
 export type OrderStatus =
   | "draft"
   | "pending_confirmation"
   | "confirmed"
   | "preparing"
   | "ready"
+  | "dispatched"
   | "scheduled"
   | "delivered"
   | "cancelled"

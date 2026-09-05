@@ -59,3 +59,29 @@ async def test_notify_order_confirmed_noop_when_not_configured():
     """Sin WSP_SERVICE_URL/API_KEY (el caso en tests, ver conftest.py) no
     debe intentar red ni tirar excepcion -- simplemente no hace nada."""
     await wsp.notify_order_confirmed(_order(), "+51923648424")
+
+
+@pytest.mark.asyncio
+async def test_notify_order_dispatched_noop_when_not_configured():
+    await wsp.notify_order_dispatched(_order(), "+51923648424")
+
+
+@pytest.mark.asyncio
+async def test_notify_order_ready_for_pickup_noop_when_not_configured():
+    await wsp.notify_order_ready_for_pickup(_order(), "+51923648424")
+
+
+def test_build_payload_with_estimated_time_includes_it():
+    payload = wsp.build_order_notification_payload(
+        _order(), "+51923648424", "order_on_the_way", "30 min"
+    )
+    assert payload["type"] == "order_on_the_way"
+    assert payload["estimatedTime"] == "30 min"
+
+
+def test_build_payload_without_estimated_time_omits_the_key():
+    # Igual que "address" en recojo -- se omite la clave entera, nunca se
+    # manda en null (el schema de wsp-service es `.optional()`, no
+    # `.nullable()`).
+    payload = wsp.build_order_notification_payload(_order(), "+51923648424")
+    assert "estimatedTime" not in payload

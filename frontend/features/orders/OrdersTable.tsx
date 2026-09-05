@@ -1,23 +1,73 @@
 "use client";
 
-import { Bike, ChevronDown, ClipboardList, PhoneCall, Store, Wallet } from "lucide-react";
+import {
+  Bike,
+  CheckCircle2,
+  ChefHat,
+  ChevronDown,
+  ClipboardList,
+  PackageCheck,
+  PhoneCall,
+  Store,
+  Wallet,
+  XCircle,
+} from "lucide-react";
 import Link from "next/link";
-import { Fragment, useActionState, useEffect, useState } from "react";
+import type { ComponentType } from "react";
+import { Fragment, useActionState, useState } from "react";
 import { updateOrderStatusAction, type UpdateOrderStatusState } from "@/app/pedidos/actions";
 import { OrderStatusBadge } from "@/components/Badge";
 import { EmptyState } from "@/components/EmptyState";
-import { ORDER_STATUS_LABEL, formatCurrency, fulfillmentLabel, paymentMethodLabel } from "@/lib/format";
+import { formatCurrency, fulfillmentLabel, paymentMethodLabel } from "@/lib/format";
 import type { OrderOut, OrderStatus } from "@/lib/types";
 
-const NEXT_STATUS_OPTIONS: OrderStatus[] = [
-  "confirmed",
-  "preparing",
-  "ready",
-  "scheduled",
-  "delivered",
-  "cancelled",
-  "failed",
-];
+// Un solo "siguiente paso" por estado (nunca un desplegable libre): asi
+// cocina/mostrador no pueden saltarse pasos por accidente -- el backend
+// tambien lo valida (ver _ORDER_STATUS_TRANSITIONS en services.py), esto
+// solo evita mostrar botones que igual el servidor rechazaria. "dispatched"
+// (sale con el motorizado) dispara el aviso de WhatsApp "ya salió, ~30
+// min"; "ready" en recojo dispara el aviso de "ya está listo".
+const TERMINAL_STATUSES: OrderStatus[] = ["delivered", "cancelled", "failed"];
+
+interface NextAction {
+  status: OrderStatus;
+  label: string;
+  icon: ComponentType<{ size?: number; className?: string }>;
+  tone: "primary" | "danger";
+}
+
+function getNextActions(order: OrderOut): NextAction[] {
+  const cancel: NextAction = { status: "cancelled", label: "Cancelar pedido", icon: XCircle, tone: "danger" };
+  const isDelivery = order.fulfillment_type === "delivery";
+
+  switch (order.status as OrderStatus) {
+    case "draft":
+    case "pending_confirmation":
+      return [{ status: "confirmed", label: "Confirmar pedido", icon: CheckCircle2, tone: "primary" }, cancel];
+    case "confirmed":
+    case "scheduled":
+      return [{ status: "preparing", label: "Aceptar en cocina", icon: ChefHat, tone: "primary" }, cancel];
+    case "preparing":
+      return isDelivery
+        ? [
+            { status: "dispatched", label: "Salió con el motorizado", icon: Bike, tone: "primary" },
+            cancel,
+          ]
+        : [
+            { status: "ready", label: "Marcar listo para recoger", icon: PackageCheck, tone: "primary" },
+            cancel,
+          ];
+    case "ready":
+      return [
+        { status: "delivered", label: "Cliente recogió su pedido", icon: CheckCircle2, tone: "primary" },
+        cancel,
+      ];
+    case "dispatched":
+      return [{ status: "delivered", label: "Motorizado entregó el pedido", icon: CheckCircle2, tone: "primary" }];
+    default:
+      return [];
+  }
+}
 
 export function OrdersTable({ orders }: { orders: OrderOut[] }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -168,31 +218,34 @@ const initialState: UpdateOrderStatusState = {};
 
 function OrderStatusForm({ order }: { order: OrderOut }) {
   const [state, formAction, isPending] = useActionState(updateOrderStatusAction, initialState);
-  const [status, setStatus] = useState(order.status);
+  const actions = getNextActions(order);
 
-  useEffect(() => {
-    setStatus(order.status);
-  }, [order.status]);
+  if (TERMINAL_STATUSES.includes(order.status as OrderStatus)) {
+    return <p className="text-xs text-slate-500">Este pedido ya está cerrado, no admite más cambios.</p>;
+  }
 
   return (
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="id" value={order.id} />
-      <select
-        name="status"
-        value={status}
-        onChange={(e) => setStatus(e.target.value as OrderStatus)}
-        className="form-input"
-      >
-        {NEXT_STATUS_OPTIONS.map((s) => (
-          <option key={s} value={s}>
-            {ORDER_STATUS_LABEL[s] ?? s}
-          </option>
-        ))}
-      </select>
+      <div className="flex flex-col gap-2">
+        {actions.map((action) => {
+          const Icon = action.icon;
+          return (
+            <button
+              key={action.status}
+              type="submit"
+              name="status"
+              value={action.status}
+              disabled={isPending}
+              className={action.tone === "danger" ? "btn-secondary w-full text-accent-rose" : "btn-primary w-full"}
+            >
+              <Icon size={14} />
+              {isPending ? "Actualizando…" : action.label}
+            </button>
+          );
+        })}
+      </div>
       {state.error && <p className="text-xs text-accent-rose">{state.error}</p>}
-      <button type="submit" disabled={isPending || status === order.status} className="btn-primary w-full">
-        {isPending ? "Actualizando…" : "Actualizar estado"}
-      </button>
     </form>
   );
 }

@@ -55,7 +55,30 @@ class DomainError(Exception):
 
 _VALID_ORDER_STATUSES = {
     "draft", "pending_confirmation", "confirmed", "preparing", "ready",
-    "scheduled", "delivered", "cancelled", "failed",
+    "dispatched", "scheduled", "delivered", "cancelled", "failed",
+}
+
+# Flujo de cocina->motorizado->entregado (ver panel de Pedidos): que
+# transicion es valida desde cada estado, para que el encargado no pueda
+# saltarse pasos por error (ej. pasar de "confirmed" directo a "delivered"
+# sin que nadie en cocina ni el motorizado hayan hecho nada). Un estado sin
+# entrada en este dict, o mapeado a un set vacio, es terminal -- no admite
+# mas cambios via update_status.
+_ORDER_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"pending_confirmation", "confirmed", "cancelled", "failed"},
+    "pending_confirmation": {"confirmed", "cancelled", "failed"},
+    "confirmed": {"preparing", "cancelled"},
+    "scheduled": {"preparing", "cancelled"},
+    # "dispatched" es el paso del motorizado (solo tiene sentido para
+    # delivery -- dispara el aviso de WhatsApp "ya salio"). "ready" es para
+    # recojo en el local: el cliente se lleva su pedido directo, sin
+    # motorizado de por medio, asi que pasa derecho a "delivered".
+    "preparing": {"ready", "dispatched", "cancelled"},
+    "ready": {"delivered", "cancelled"},
+    "dispatched": {"delivered"},
+    "delivered": set(),
+    "cancelled": set(),
+    "failed": set(),
 }
 
 
@@ -391,6 +414,12 @@ class OrderService:
         if not order:
             raise DomainError("Pedido no encontrado.")
         previous = order.status
+        if status != previous:
+            allowed = _ORDER_STATUS_TRANSITIONS.get(previous, set())
+            if status not in allowed:
+                raise DomainError(
+                    f"No se puede pasar el pedido de '{previous}' a '{status}' directamente."
+                )
         order.status = status
         self.session.add(
             AuditLog(
@@ -404,6 +433,19 @@ class OrderService:
         )
         await self.session.commit()
         return await self.get(order.id)
+
+    async def get_customer_phone(self, order_id: int) -> str | None:
+        """Solo para el aviso de WhatsApp al despachar (ver
+        app/api/v1/orders.py) -- OrderOut no expone el telefono a proposito
+        (no hace falta mostrarlo en la tabla de Pedidos del frontend)."""
+        order = await self.session.scalar(
+            select(Order)
+            .options(selectinload(Order.customer))
+            .where(Order.tenant_id == self.tenant_id, Order.id == order_id)
+        )
+        if not order or not order.customer:
+            return None
+        return order.customer.phone
 
     async def get(self, order_id: int) -> OrderOut:
         order = await self.session.scalar(
