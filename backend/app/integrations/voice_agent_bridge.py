@@ -44,6 +44,117 @@ _DEEPGRAM_KEEPALIVE_SECONDS = 8.0
 _HANGUP_GRACE_SECONDS = 2.5
 
 
+# Polling del watchdog de silencio/duracion maxima -- no hace falta mas
+# fino que esto, los umbrales que importan (settings.call_silence_*,
+# call_max_duration_seconds) se miden en decenas de segundos o minutos.
+_WATCHDOG_POLL_SECONDS = 5.0
+_SILENCE_WARNING_MESSAGE = "¿Sigues ahí? Si no me dices nada más, voy a cortar la llamada."
+_SILENCE_HANGUP_MESSAGE = "Como no escucho nada, voy a cortar por ahora. ¡Que tengas buen día!"
+_MAX_DURATION_MESSAGE = "Perdón, tengo que cortar por ahora. Si quieres pedir algo más, vuelve a llamarnos. ¡Gracias!"
+
+
+async def _inject_agent_message(dg_ws, call_control_id: str, message: str) -> None:
+    """"Pone palabras en la boca" del agente sin pasar por una respuesta
+    real del LLM (ver docs.deepgram.com, InjectAgentMessage) -- para los
+    avisos del watchdog de silencio/duracion maxima, que no son respuesta a
+    nada que haya dicho el cliente. `behavior: interrupt` para que salga ya
+    mismo aunque el agente estuviera hablando (silencio real implica que no
+    deberia estar hablando de todos modos, pero por si acaso)."""
+    try:
+        await dg_ws.send(json.dumps({
+            "type": "InjectAgentMessage",
+            "message": message,
+            "behavior": "interrupt",
+        }))
+    except Exception:
+        # Sin re-lanzar: si esto falla, el watchdog sigue corriendo y
+        # reintentara con el proximo umbral (duracion maxima, si el aviso de
+        # silencio fue el que fallo) en vez de tumbar el puente entero.
+        logger.exception(
+            "Voice Agent bridge: fallo al inyectar mensaje del watchdog call_control_id=%s", call_control_id
+        )
+
+
+def _watchdog_decision(
+    now: float,
+    call_started_at: float,
+    last_activity: float,
+    warned_at: float | None,
+) -> tuple[str, float | None]:
+    """Logica pura de una vuelta del watchdog -- separada de
+    _silence_and_duration_watchdog (que solo hace asyncio.sleep + I/O)
+    justamente para poder testearla con valores de tiempo exactos, sin
+    depender de esperas reales de milisegundos (fuente real de tests
+    flaky). Devuelve (accion, nuevo warned_at):
+      accion = "none" | "warn" | "hangup_max_duration" | "hangup_silence".
+    """
+    if now - call_started_at > settings.call_max_duration_seconds:
+        return "hangup_max_duration", warned_at
+
+    if warned_at is not None and last_activity > warned_at:
+        # Hubo un turno real despues del aviso -- ya no esta en silencio.
+        warned_at = None
+
+    if warned_at is None:
+        if now - last_activity > settings.call_silence_warning_seconds:
+            return "warn", now
+        return "none", warned_at
+
+    if now - warned_at > settings.call_silence_hangup_grace_seconds:
+        return "hangup_silence", warned_at
+
+    return "none", warned_at
+
+
+async def _silence_and_duration_watchdog(dg_ws, call_control_id: str, call_started_at: float) -> None:
+    """Corre en paralelo durante toda la llamada (ver bridge_call, mismo
+    patron que keepalive_loop: nunca retorna sola, solo la cancela el
+    `asyncio.wait` principal cuando otra tarea termina de verdad). Dos
+    chequeos independientes por vuelta (ver _watchdog_decision): silencio
+    real desde el ultimo turno procesado, y duracion total de la llamada.
+    Ambos terminan igual: prender `state.hangup_after_response` e inyectar
+    un mensaje de despedida -- el colgado real lo dispara el AgentAudioDone
+    de ESE mensaje, mismo mecanismo que ya usa la confirmacion de pedido
+    (ver deepgram_to_telnyx mas abajo), sin duplicar logica de colgado aca."""
+    warned_at: float | None = None
+    closing_message_sent = False
+    while True:
+        await asyncio.sleep(_WATCHDOG_POLL_SECONDS)
+        if closing_message_sent:
+            continue  # ya se disparo el cierre, solo falta que termine de sonar y cuelgue solo
+
+        state = peek(call_control_id)
+        if state is None:
+            continue  # la llamada ya se cerro por otro lado (ej. handoff)
+
+        now = time.monotonic()
+        last_activity = max(state.last_touched_at, call_started_at)
+        action, warned_at = _watchdog_decision(now, call_started_at, last_activity, warned_at)
+
+        if action == "warn":
+            logger.info(
+                "Voice Agent bridge: silencio detectado, avisando call_control_id=%s inactividad=%.0fs",
+                call_control_id, now - last_activity,
+            )
+            await _inject_agent_message(dg_ws, call_control_id, _SILENCE_WARNING_MESSAGE)
+        elif action == "hangup_max_duration":
+            logger.warning(
+                "Voice Agent bridge: duracion maxima de llamada superada call_control_id=%s duracion=%.0fs",
+                call_control_id, now - call_started_at,
+            )
+            state.hangup_after_response = True
+            closing_message_sent = True
+            await _inject_agent_message(dg_ws, call_control_id, _MAX_DURATION_MESSAGE)
+        elif action == "hangup_silence":
+            logger.warning(
+                "Voice Agent bridge: silencio persistente tras aviso, colgando call_control_id=%s",
+                call_control_id,
+            )
+            state.hangup_after_response = True
+            closing_message_sent = True
+            await _inject_agent_message(dg_ws, call_control_id, _SILENCE_HANGUP_MESSAGE)
+
+
 async def _hangup_after_grace(call_control_id: str) -> None:
     await asyncio.sleep(_HANGUP_GRACE_SECONDS)
     try:
@@ -421,7 +532,12 @@ async def bridge_call(telnyx_ws: WebSocket, call_control_id: str, customer_phone
                                 asyncio.create_task(_hangup_after_grace(call_control_id))
 
             done, pending = await asyncio.wait(
-                [telnyx_task, asyncio.create_task(deepgram_to_telnyx()), asyncio.create_task(keepalive_loop())],
+                [
+                    telnyx_task,
+                    asyncio.create_task(deepgram_to_telnyx()),
+                    asyncio.create_task(keepalive_loop()),
+                    asyncio.create_task(_silence_and_duration_watchdog(dg_ws, call_control_id, call_started_at)),
+                ],
                 return_when=asyncio.FIRST_COMPLETED,
             )
             # Sin esto, si Deepgram cierra la conexion con un error (ej. el

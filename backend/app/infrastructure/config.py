@@ -66,6 +66,27 @@ class Settings(BaseSettings):
     # del otro. Requiere media_streaming_enabled=true tambien.
     voice_agent_bridge_enabled: bool = False
 
+    # Corte de llamadas colgadas/con ruido de fondo (ver
+    # app/integrations/voice_agent_bridge.py, silence_and_duration_watchdog):
+    # Telnyx cobra por minuto sin importar si hay una conversacion real
+    # pasando, asi que una llamada que nadie corta (el cliente se olvida, o
+    # hay gente hablando cerca del telefono sin pedir nada) sigue generando
+    # costo indefinidamente si no se corta sola. Dos mecanismos, pensados
+    # para no confundirse entre si:
+    #   1. Silencio real (nadie dice nada que llegue a completar un turno
+    #      -- ver ConversationState.last_touched_at): a los
+    #      call_silence_warning_seconds sin actividad se avisa una vez
+    #      ("¿sigues ahi?"); si sigue sin actividad
+    #      call_silence_hangup_grace_seconds mas, se cuelga.
+    #   2. Duracion maxima dura: sin importar cuanta "actividad" haya (ruido
+    #      de fondo transcrito de casualidad, gente hablando sin pedir
+    #      nada), ninguna llamada dura mas de call_max_duration_seconds --
+    #      un pedido real de restaurante nunca se acerca a este limite, es
+    #      la red de seguridad de costo definitiva.
+    call_silence_warning_seconds: int = 35
+    call_silence_hangup_grace_seconds: int = 15
+    call_max_duration_seconds: int = 600
+
     # Bug real (ago 2026): conversaciones de canal web abandonadas a mitad
     # de flujo (el usuario cierra la pestana, o son pruebas manuales via
     # /agent/turn) se quedaban en status="active" para siempre -- el chat
