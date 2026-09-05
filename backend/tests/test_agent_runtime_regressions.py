@@ -416,7 +416,7 @@ async def test_cancel_clears_order_details_before_next_order():
             ).status == "need_address"
             assert (
                 await runtime.handle_turn(
-                    AgentMessageIn(message="Av Siempre Viva 123", conversation_id=conversation_id)
+                    AgentMessageIn(message="Av Siempre Viva 123, Comas", conversation_id=conversation_id)
                 )
             ).status == "need_payment"
             assert (
@@ -894,7 +894,7 @@ async def test_yape_answer_does_not_double_pending_order_quantity():
                 "Quiero una hamburguesa vegetariana",
                 "Carlos",
                 "delivery",
-                "Calle Falsa 123",
+                "Calle Falsa 123, Los Olivos",
             ):
                 await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
 
@@ -950,7 +950,7 @@ async def test_generic_acknowledgment_during_detail_collection_repeats_question_
                 "Quiero una hamburguesa vegetariana",
                 "Carlos",
                 "delivery",
-                "Calle Falsa 123",
+                "Calle Falsa 123, Los Olivos",
             ):
                 await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
 
@@ -1023,7 +1023,7 @@ async def test_hours_inquiry_mid_detail_collection_repeats_pending_question():
     try:
         async with AsyncSessionLocal() as session:
             runtime = AgentRuntime(session, settings.default_tenant_id)
-            for message in ("Quiero una hamburguesa vegetariana", "Carlos", "delivery", "Calle Falsa 123"):
+            for message in ("Quiero una hamburguesa vegetariana", "Carlos", "delivery", "Calle Falsa 123, Los Olivos"):
                 await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
 
             turn = await runtime.handle_turn(
@@ -1534,3 +1534,94 @@ async def test_delivery_fee_charged_only_on_delivery_not_pickup():
     finally:
         reset(delivery_id)
         reset(pickup_id)
+
+
+@pytest.mark.asyncio
+async def test_delivery_asks_district_explicitly_when_address_does_not_name_one():
+    # Ni la llamada ni el WhatsApp piden "direccion" y "distrito" como dos
+    # preguntas separadas de entrada -- pero si la direccion que dan no
+    # menciona ningun distrito, no se puede saber si esta en zona. En vez
+    # de dejarla pasar en silencio, se pregunta el distrito una vez mas.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "delivery"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            # Direccion sin distrito: no se guarda, se pregunta el distrito.
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="Jr. Los Alamos 456", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_address"
+            assert state.delivery_address is None
+            assert "distrito" in asked.response.lower()
+
+            # El distrito solo (una palabra) se junta con la calle ya dada.
+            accepted = await runtime.handle_turn(
+                AgentMessageIn(message="Comas", conversation_id=conversation_id)
+            )
+            assert accepted.status == "need_payment"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.delivery_address == "Jr. Los Alamos 456, Comas"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_delivery_district_answer_rejects_if_out_of_zone():
+    # Si tras preguntar el distrito la respuesta esta fuera de zona, se
+    # rechaza igual que una direccion completa fuera de zona desde el
+    # principio -- no se cuela por haber pasado por la pregunta extra.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "delivery"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="Av. Larco 123", conversation_id=conversation_id)
+            )
+            assert "distrito" in asked.response.lower()
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="Miraflores", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_address"
+            assert state.delivery_address is None
+            assert "Puente Piedra" in rejected.response
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_delivery_gives_up_asking_district_after_one_retry_to_avoid_a_loop():
+    # Si ni siquiera la segunda respuesta trae un distrito reconocible, no
+    # se vuelve a preguntar en loop -- se deja pasar tal cual (mejor no
+    # trabar a un cliente real de la zona por no saber nombrar su distrito).
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "delivery"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="Jr. Los Alamos 456", conversation_id=conversation_id)
+            )
+            assert "distrito" in asked.response.lower()
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="cerca del parque", conversation_id=conversation_id)
+            )
+            assert turn.status == "need_payment"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.delivery_address == "Jr. Los Alamos 456, cerca del parque"
+    finally:
+        reset(conversation_id)

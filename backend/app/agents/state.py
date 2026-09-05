@@ -72,6 +72,13 @@ class ConversationState:
     # direccion?" cuando vuelve a preguntar. None si la ultima direccion
     # dada (si hubo alguna) fue aceptada o si todavia no se pidio ninguna.
     pending_zone_rejection_message: str | None = None
+    # Direccion ya dada por el cliente pero sin ningun distrito reconocible
+    # (ver domain/delivery_zones.address_names_known_district) -- se guarda
+    # aca mientras se pregunta explicitamente "¿a que distrito pertenece?"
+    # para poder juntarla con esa respuesta en el siguiente turno en vez de
+    # tratarla como una direccion nueva que reemplaza a la anterior. None
+    # si no hay ninguna direccion esperando distrito.
+    pending_address_awaiting_district: str | None = None
 
 
 _STORE: dict[str, ConversationState] = {}

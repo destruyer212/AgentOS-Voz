@@ -23,7 +23,11 @@ from app.ai.base import ParsedItem
 from app.ai.router import ai_router
 from app.ai.rule_based import CANCEL_WORDS, CONFIRM_WORDS, is_audio_repair_message, is_hours_inquiry
 from app.domain.business_hours import business_hours_message
-from app.domain.delivery_zones import delivery_zone_rejection_message
+from app.domain.delivery_zones import (
+    address_names_known_district,
+    ask_district_message,
+    delivery_zone_rejection_message,
+)
 from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
@@ -377,6 +381,7 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.pending_clarification = None
     state.hangup_after_response = False
     state.pending_zone_rejection_message = None
+    state.pending_address_awaiting_district = None
 
 
 class AgentRuntime:
@@ -964,6 +969,20 @@ class AgentRuntime:
                 state, f"Perdón, no te entendí bien. {pending_prompt}", "detail.unclear", [], tool_calls, None
             )
 
+        # Ruta dedicada para cuando se acaba de preguntar explicitamente el
+        # distrito (ver _apply_detail_answer/need_address y
+        # domain/delivery_zones.py). La respuesta ahi suele ser una sola
+        # palabra ("Comas", "Ancón") -- el camino generico de mas abajo
+        # (literal/NLU) exige 2+ palabras o un digito para aceptar una
+        # direccion, asi que un distrito suelto se perderia y volveria a
+        # preguntar en loop. Se acepta directo salvo que la respuesta traiga
+        # señales claras de ser otra cosa (pedir/cambiar del menu).
+        if current == "need_address" and state.pending_address_awaiting_district and not any(
+            word in lowered for word in _DETAIL_LITERAL_BLOCKLIST
+        ):
+            await self._apply_detail_answer(state, current, message)
+            return await self._advance_order(state, tool_calls)
+
         # Ruta ultrarrapida y segura: fulfillment/pago son vocabularios
         # cerrados. Si calzan directo, no llamamos a Gemini.
         if current == "need_fulfillment":
@@ -1074,11 +1093,40 @@ class AgentRuntime:
                 return
             state.fulfillment_type = value
             if state.fulfillment_type == "delivery" and state.customer and state.customer.get("address"):
-                state.delivery_address = state.customer["address"]
+                # La direccion guardada en la ficha del cliente tambien pasa
+                # por el mismo chequeo de zona/distrito que una direccion
+                # nueva -- si no, un cliente repetido con una direccion vieja
+                # sin distrito (o de fuera de zona) se saltaria el filtro por
+                # completo. Si no pasa, NO se autocompleta: se deja
+                # delivery_address vacio para que _next_missing_detail vuelva
+                # a preguntar, con el mensaje correcto ya listo.
+                saved_address = state.customer["address"]
+                zone_message = delivery_zone_rejection_message(saved_address)
+                if zone_message:
+                    state.pending_zone_rejection_message = zone_message
+                elif not address_names_known_district(saved_address):
+                    state.pending_address_awaiting_district = saved_address
+                    state.pending_zone_rejection_message = ask_district_message()
+                else:
+                    state.delivery_address = saved_address
             return
 
         if current == "need_address":
             address = _extract_address(raw_value)
+            # Si ya estabamos esperando el distrito de una direccion previa
+            # (ver mas abajo), esta respuesta es SOLO el distrito -- se junta
+            # con la calle que ya habian dado en vez de tratarla como una
+            # direccion nueva que la reemplaza (si no, "San Martin de Porres"
+            # solo pisaria el "Jr. Las Flores 123" ya dado). Ya se pregunto
+            # una vez, asi que esta es la ultima oportunidad: si la respuesta
+            # tampoco trae un distrito reconocible, se deja pasar tal cual en
+            # vez de preguntar de nuevo (mejor no trabar a un cliente real de
+            # la zona en un loop infinito).
+            already_asked_district = bool(state.pending_address_awaiting_district)
+            if already_asked_district:
+                address = f"{state.pending_address_awaiting_district}, {raw_value}"
+                state.pending_address_awaiting_district = None
+
             # Pedido explicito del negocio: delivery solo cerca de Puente
             # Piedra, nunca fuera de Lima. Si la direccion da evidencia de
             # estar fuera de zona, no se guarda -- se deja el mensaje listo
@@ -1089,6 +1137,17 @@ class AgentRuntime:
             if zone_message:
                 state.pending_zone_rejection_message = zone_message
                 return
+
+            # La direccion no menciona ningun distrito conocido (ni cercano
+            # ni lejano) -- no hay con que decidir si esta en zona. En vez de
+            # dejarla pasar en silencio (lo que dejaria entrar direcciones
+            # fuera de zona que nunca nombran su distrito), se pregunta el
+            # distrito explicitamente una vez.
+            if not already_asked_district and not address_names_known_district(address):
+                state.pending_address_awaiting_district = address
+                state.pending_zone_rejection_message = ask_district_message()
+                return
+
             state.pending_zone_rejection_message = None
             state.delivery_address = address
             if state.customer:

@@ -67,6 +67,12 @@ _DELIVERY_ZONE_MESSAGE = (
     "¿Prefieres recoger tu pedido en el local?"
 )
 
+_ASK_DISTRICT_MESSAGE = (
+    "Perfecto, ¿y a qué distrito pertenece esa dirección? Hacemos delivery "
+    "cerca de Puente Piedra (Comas, Los Olivos, Carabayllo, Ancón o San "
+    "Martín de Porres)."
+)
+
 
 def delivery_zone_rejection_message(address: str) -> str | None:
     """None si la direccion parece estar dentro de la zona de reparto (o no
@@ -84,3 +90,21 @@ def delivery_zone_rejection_message(address: str) -> str | None:
         return _DELIVERY_ZONE_MESSAGE
 
     return None
+
+
+def address_names_known_district(address: str) -> bool:
+    """True si la direccion ya menciona un distrito reconocible (cercano o
+    lejano) o un departamento -- es decir, si delivery_zone_rejection_message
+    tiene con que decidir de verdad. Usado para distinguir "direccion sin
+    distrito" (hay que preguntar cual es) de "direccion con distrito ya
+    aceptado" (no hace falta preguntar de nuevo)."""
+    lowered = normalize_text(address)
+    return (
+        any(district in lowered for district in NEARBY_DELIVERY_DISTRICTS)
+        or any(dept in lowered for dept in PERU_DEPARTMENTS_OUTSIDE_LIMA)
+        or any(district in lowered for district in KNOWN_FAR_DISTRICTS)
+    )
+
+
+def ask_district_message() -> str:
+    return _ASK_DISTRICT_MESSAGE

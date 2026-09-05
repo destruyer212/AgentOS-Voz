@@ -67,7 +67,7 @@ async def test_scenario_happy_path_delivery_yape():
                 "Hola, quiero una hamburguesa clasica y una Inca Kola",
                 "Carlos Ramirez",
                 "delivery",
-                "Av Los Pinos 456",
+                "Av Los Pinos 456, Comas",
                 "yape",
                 "si, confirmo",
             ],
