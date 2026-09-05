@@ -93,6 +93,31 @@ async def test_boleta_with_dni_uses_customer_data():
 
 
 @pytest.mark.asyncio
+async def test_boleta_ignores_a_ruc_left_on_file_from_a_previous_factura():
+    # Bug real, visto en vivo: un cliente que antes pidio factura queda con
+    # doc_type="6" (RUC) guardado en su ficha. Una boleta posterior del
+    # mismo telefono NO debe salir con ese RUC -- boleta es para personas,
+    # RUC es cosa de factura. Tiene que caer al placeholder "sin DNI".
+    async with AsyncSessionLocal() as session:
+        customer_svc = CustomerService(session, settings.default_tenant_id)
+        customer = await customer_svc.get_or_create(CustomerCreate(name="Pedro Ruiz", phone="+51900111666"))
+        await session.commit()
+        await customer_svc.update(
+            customer.id,
+            CustomerUpdate(doc_type="6", doc_number="20123456789", legal_name="EMPRESA DE PEDRO S.A.C"),
+        )
+
+        order_id = await _make_order(session, customer.id)
+        invoice = await InvoicingService(session, settings.default_tenant_id).create_from_order(
+            InvoiceFromOrderRequest(order_id=order_id, document_type="boleta")
+        )
+
+        assert invoice.cliente_tipo_doc == "1"
+        assert invoice.cliente_numero_doc == "99999999"
+        assert invoice.cliente_denominacion == "CLIENTE VARIOS"
+
+
+@pytest.mark.asyncio
 async def test_factura_requires_ruc():
     async with AsyncSessionLocal() as session:
         customer_svc = CustomerService(session, settings.default_tenant_id)

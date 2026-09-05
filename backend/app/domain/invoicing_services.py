@@ -134,13 +134,20 @@ class InvoicingService:
             direccion = override_direccion or (customer.address if customer else None) or "-"
             return tipo, numero, denominacion, direccion
 
-        # boleta: si no hay documento identificable, se usa el placeholder
-        # real de apisunat.pe -- nunca se inventa un DNI.
+        # boleta: el documento en ficha solo cuenta aca si es de PERSONA
+        # (DNI/CE/pasaporte/cedula diplomatica). Bug real, visto en vivo: un
+        # cliente que antes pidio factura queda con doc_type="6" (RUC)
+        # guardado en su ficha -- una boleta posterior del mismo telefono
+        # NO debe salir con ese RUC (RUC es cosa de factura), asi que un "6"
+        # aca se descarta y cae al placeholder de "sin DNI" igual que si no
+        # tuviera nada guardado.
+        if tipo == "6":
+            tipo, numero = None, None
         if not tipo or not numero:
             return _SIN_DNI_TIPO, _SIN_DNI_NUMERO, _SIN_DNI_DENOMINACION, _SIN_DNI_DIRECCION
 
-        denominacion = override_denominacion or (customer.legal_name if customer else None) or (
-            customer.name if customer else None
+        denominacion = override_denominacion or (customer.name if customer else None) or (
+            customer.legal_name if customer else None
         ) or _SIN_DNI_DENOMINACION
         direccion = override_direccion or (customer.address if customer else None) or _SIN_DNI_DIRECCION
         return tipo, numero, denominacion, direccion
