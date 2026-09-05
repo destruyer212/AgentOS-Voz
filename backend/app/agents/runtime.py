@@ -28,7 +28,9 @@ from app.domain.delivery_zones import (
     ask_district_message,
     delivery_zone_rejection_message,
 )
-from app.domain.models import Conversation, VoiceTurnMetric, WorkflowRun
+from app.domain.invoicing_schemas import InvoiceFromOrderRequest, InvoiceOut
+from app.domain.invoicing_services import InvoicingError, InvoicingService
+from app.domain.models import Conversation, Tenant, VoiceTurnMetric, WorkflowRun
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
 from app.domain.text_utils import (
@@ -39,6 +41,7 @@ from app.domain.text_utils import (
     tokens_partial_match,
 )
 from app.infrastructure.config import settings
+from app.infrastructure.db.session import AsyncSessionLocal
 from app.integrations.wsp_notifications import fire_and_forget, notify_order_confirmed
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
@@ -48,14 +51,25 @@ from app.workflows.models import WorkflowRunResult
 # Sub-estados de recoleccion de datos de entrega, en el orden en que se piden.
 logger = logging.getLogger(__name__)
 
-_DETAIL_STATUSES = ("need_name", "need_fulfillment", "need_address", "need_payment")
+_DETAIL_STATUSES = ("need_name", "need_fulfillment", "need_address", "need_payment", "need_ruc")
 
 _DETAIL_PROMPTS = {
     "name": "Para el pedido, ¿a nombre de quién lo dejo?",
     "fulfillment": "¿Lo recoges tú en el local o te lo llevamos por delivery?",
     "address": "¿Cuál es la dirección de entrega?",
     "payment": "¿Pagas en efectivo, Yape o tarjeta?",
+    "ruc": "Perfecto, ¿me das el RUC y la razón social de tu empresa para la factura?",
 }
+
+# Palabras que, en cualquier punto de la conversacion, indican que el
+# cliente quiere factura (con RUC) en vez de la boleta automatica por
+# defecto -- ver domain/invoicing_services.py. Deliberadamente simple
+# (substring, no NLU): una vez detectado no hace falta reconocerlo de
+# nuevo, y una falsa alarma solo agrega una pregunta de mas, nunca rompe
+# el pedido.
+_FACTURA_REQUEST_PHRASES = ("factura", "con ruc", "facturar", "a nombre de mi empresa", "a nombre de la empresa")
+
+_RUC_RE = re.compile(r"\b(\d{11})\b")
 
 # Categorias del menu y palabras que el cliente usa para referirse a ellas,
 # para responder preguntas tipo "¿hay algo para tomar?" con las opciones
@@ -382,6 +396,56 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.hangup_after_response = False
     state.pending_zone_rejection_message = None
     state.pending_address_awaiting_district = None
+    state.wants_factura = False
+    state.factura_ruc = None
+    state.factura_razon_social = None
+    state.pending_ruc_rejection_message = None
+
+
+async def _issue_invoice_and_notify(
+    tenant_id: str,
+    order_id: int,
+    customer_phone: str | None,
+    wants_factura: bool,
+    ruc: str | None,
+    razon_social: str | None,
+) -> None:
+    """Corre en paralelo, fuera del turno (ver fire_and_forget en el punto
+    donde se confirma el pedido): emite la boleta/factura real contra
+    apisunat.pe y recien despues manda el WhatsApp de confirmacion, con el
+    link al PDF si se pudo emitir. Nunca bloquea la respuesta al cliente ni
+    la llamada -- si emitir el comprobante falla o tarda, el WhatsApp de
+    "pedido confirmado" sale igual, solo que sin el link.
+
+    Sesion de DB propia (AsyncSessionLocal, no self.session): para cuando
+    esto corre, la sesion del turno que disparo la llamada ya pudo haberse
+    cerrado -- mismo motivo por el que notify_order_confirmed no toca la
+    sesion del turno en absoluto."""
+    document_url: str | None = None
+    document_label: str | None = None
+    async with AsyncSessionLocal() as session:
+        try:
+            document_type = "factura" if wants_factura else "boleta"
+            request = InvoiceFromOrderRequest(
+                order_id=order_id,
+                document_type=document_type,
+                cliente_tipo_doc="6" if wants_factura else None,
+                cliente_numero_doc=ruc if wants_factura else None,
+                cliente_denominacion=razon_social if wants_factura else None,
+            )
+            invoice: InvoiceOut = await InvoicingService(session, tenant_id).create_from_order(request)
+            if invoice.sunat_pdf_a4_url:
+                label = "Factura" if wants_factura else "Boleta"
+                document_url = invoice.sunat_pdf_a4_url
+                document_label = f"{label} {invoice.serie}-{invoice.numero}"
+        except InvoicingError:
+            logger.exception("No se pudo emitir comprobante SUNAT para order_id=%s", order_id)
+        except Exception:
+            logger.exception("Fallo inesperado emitiendo comprobante SUNAT para order_id=%s", order_id)
+
+        order_out = await OrderService(session, tenant_id).get(order_id)
+
+    await notify_order_confirmed(order_out, customer_phone, document_url=document_url, document_label=document_label)
 
 
 class AgentRuntime:
@@ -420,6 +484,23 @@ class AgentRuntime:
             if state.status in _DETAIL_STATUSES:
                 response += f" {_DETAIL_PROMPTS[state.status[len('need_'):]]}"
             return await self._finish(state, response, "hours.inquiry", [], tool_calls, None)
+
+        # Pedido de factura: puede llegar en cualquier momento (junto con el
+        # pedido, a mitad de dar los datos, o incluso despues de ya ver el
+        # resumen final). Por defecto el pedido se factura solo como boleta
+        # (sin preguntar nada nuevo) -- esto solo prende el flag y, si ya
+        # estabamos esperando el "si, confirmo" final, interrumpe para pedir
+        # el RUC antes de seguir (si no, la boleta ya se habria armado sin
+        # el RUC). En cualquier otro momento simplemente sigue el turno
+        # normal -- _next_missing_detail agrega la pregunta del RUC sola
+        # cuando le toque, sin necesidad de cortar el flujo aca.
+        if not state.wants_factura and any(
+            phrase in normalize_text(payload.message) for phrase in _FACTURA_REQUEST_PHRASES
+        ):
+            state.wants_factura = True
+            if state.status == "awaiting_confirmation" and not state.factura_ruc:
+                state.status = "need_ruc"
+                return await self._finish(state, _DETAIL_PROMPTS["ruc"], "detail.ask", [], tool_calls, None)
 
         # Sub-estados de recoleccion de datos (nombre/entrega/pago): no pasan
         # por el NLU de pedidos, se interpretan directo como respuesta a la
@@ -603,6 +684,14 @@ class AgentRuntime:
             return await self._advance_order(state, tool_calls)
 
         if parsed.intent == "order.confirm" and state.status == "awaiting_confirmation":
+            # Capturados ANTES de _confirm_order: ese metodo llama
+            # _reset_order_draft al confirmar, que ya deja el flag y el RUC
+            # en blanco para el proximo pedido de la misma llamada -- si se
+            # leyeran despues, siempre saldria boleta sin RUC.
+            wants_factura = state.wants_factura
+            factura_ruc = state.factura_ruc
+            factura_razon_social = state.factura_razon_social
+
             order = await self._confirm_order(state, tool_calls)
             if order is None:
                 state.status = "collecting"
@@ -617,11 +706,25 @@ class AgentRuntime:
             # ahi seria mucho peor que no colgar (cortarle la llamada a
             # alguien que pidio hablar con una persona).
             state.hangup_after_response = True
-            # Dispara el WhatsApp real en paralelo, sin esperarlo: si
-            # wsp-service esta lento, caido, o sin configurar, la llamada
-            # igual sigue y cuelga normal -- ver wsp_notifications.py.
+            # Dispara en paralelo, sin esperar: primero emite la boleta/
+            # factura real contra apisunat.pe y recien despues manda el
+            # WhatsApp de confirmacion (con el link al PDF si se pudo
+            # emitir). Si SUNAT esta lento o caido, la llamada igual sigue y
+            # cuelga normal -- ver _issue_invoice_and_notify. Solo se
+            # dispara si el negocio configuro su token de apisunat.pe: sin
+            # eso, ni siquiera se crea el borrador local -- evita llenar la
+            # tabla de comprobantes (y gastar numeros de serie) para
+            # negocios que todavia no activaron facturacion electronica.
             customer_phone = state.customer.get("phone") if state.customer else None
-            fire_and_forget(notify_order_confirmed(order, customer_phone))
+            tenant = await self.session.get(Tenant, self.tenant_id)
+            if tenant and tenant.apisunat_token:
+                fire_and_forget(
+                    _issue_invoice_and_notify(
+                        self.tenant_id, order.id, customer_phone, wants_factura, factura_ruc, factura_razon_social
+                    )
+                )
+            else:
+                fire_and_forget(notify_order_confirmed(order, customer_phone))
             time_part = f" para las {order.requested_time}" if order.requested_time else ""
             response = (
                 f"Listo, pedido confirmado{time_part}, son {_format_money_for_voice(order.total)}. "
@@ -919,6 +1022,8 @@ class AgentRuntime:
             return "address"
         if not state.payment_method:
             return "payment"
+        if state.wants_factura and not state.factura_ruc:
+            return "ruc"
         return None
 
     async def _advance_order(self, state: ConversationState, tool_calls: list[ToolCallOut]) -> AgentTurnOut:
@@ -931,6 +1036,8 @@ class AgentRuntime:
             prompt = _DETAIL_PROMPTS[missing_detail]
             if missing_detail == "address" and state.pending_zone_rejection_message:
                 prompt = state.pending_zone_rejection_message
+            elif missing_detail == "ruc" and state.pending_ruc_rejection_message:
+                prompt = state.pending_ruc_rejection_message
             return await self._finish(state, prompt, "order.create", [], tool_calls, None)
         state.status = "awaiting_confirmation"
         return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
@@ -980,6 +1087,13 @@ class AgentRuntime:
         if current == "need_address" and state.pending_address_awaiting_district and not any(
             word in lowered for word in _DETAIL_LITERAL_BLOCKLIST
         ):
+            await self._apply_detail_answer(state, current, message)
+            return await self._advance_order(state, tool_calls)
+
+        # RUC: extraccion determinista (11 digitos exactos, catalogo SUNAT),
+        # no hace falta NLU. Si no aparece un RUC valido en el mensaje, se
+        # repite la pregunta explicando el motivo en vez de adivinar.
+        if current == "need_ruc":
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
@@ -1169,6 +1283,44 @@ class AgentRuntime:
             if value not in {"efectivo", "yape", "plin", "tarjeta"}:
                 return
             state.payment_method = value
+            return
+
+        if current == "need_ruc":
+            lowered = normalize_text(raw_value)
+            # Se arrepintio y prefiere boleta -- vuelve al flujo normal sin
+            # trabarse pidiendo un RUC que ya no quiere dar.
+            if "boleta" in lowered and not _RUC_RE.search(raw_value):
+                state.wants_factura = False
+                state.pending_ruc_rejection_message = None
+                return
+            match = _RUC_RE.search(raw_value)
+            if not match:
+                state.pending_ruc_rejection_message = (
+                    "No reconocí un RUC válido (son 11 dígitos). ¿Me lo repites, o prefieres boleta?"
+                )
+                return
+            ruc = match.group(1)
+            # La razon social es lo que sobra del mensaje despues de sacar
+            # el RUC y palabras de relleno tipicas ("es", "el ruc es", etc).
+            # Conservador a proposito: si no queda nada util, se usa el
+            # nombre que ya dio el cliente en vez de inventar una razon
+            # social vacia (factura sin razon social no es valida).
+            razon_social = _RUC_RE.sub("", raw_value)
+            razon_social = re.sub(
+                r"\b(el\s+ruc\s+es|ruc|es|y|razon\s+social|la\s+razon\s+social\s+es)\b", "", razon_social,
+                flags=re.IGNORECASE,
+            ).strip(" ,.-")
+            if not razon_social:
+                razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+            state.factura_ruc = ruc
+            state.factura_razon_social = razon_social
+            state.pending_ruc_rejection_message = None
+            if state.customer and state.customer.get("id"):
+                await CustomerService(self.session, self.tenant_id).update_tax_info(
+                    state.customer["id"], "6", ruc, razon_social
+                )
+                await self.session.commit()
+            return
 
     def _build_summary(self, state: ConversationState) -> str:
         lines = [

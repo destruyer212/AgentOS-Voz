@@ -1625,3 +1625,125 @@ async def test_delivery_gives_up_asking_district_after_one_retry_to_avoid_a_loop
             assert state.delivery_address == "Jr. Los Alamos 456, cerca del parque"
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_boleta_by_default_does_not_ask_for_ruc():
+    # El caso comun: nadie pide factura, asi que el pedido llega derecho a
+    # la confirmacion sin ninguna pregunta nueva -- la boleta se arma sola
+    # al confirmar (ver AgentRuntime._issue_invoice_and_notify).
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                turn = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.wants_factura is False
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_factura_request_during_collection_adds_ruc_question_before_confirmation():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Necesito factura", "Quiero una hamburguesa clasica", "Carlos",
+                "recojo en el local", "efectivo",
+            ):
+                turn = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            assert turn.status == "need_ruc"
+            assert "RUC" in turn.response
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="el RUC es 20123456789, razon social Comercial Prueba SAC",
+                    conversation_id=conversation_id,
+                )
+            )
+            assert confirmed.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_ruc == "20123456789"
+            assert "comercial prueba sac" in state.factura_razon_social.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_factura_request_after_summary_shown_asks_ruc_then_reshows_summary():
+    # Bug real que se queria evitar: si el cliente pide factura DESPUES de
+    # ya haber escuchado el resumen final, no puede confirmarse la boleta a
+    # medias -- hay que interrumpir, pedir el RUC, y volver a mostrar el
+    # resumen antes de aceptar un "si, confirmo" real.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            summary = None
+            for message in (
+                "Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo",
+            ):
+                summary = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            assert summary.status == "awaiting_confirmation"
+
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="espera, necesito factura", conversation_id=conversation_id)
+            )
+            assert asked.status == "need_ruc"
+
+            resummarized = await runtime.handle_turn(
+                AgentMessageIn(message="20123456789 Comercial Prueba SAC", conversation_id=conversation_id)
+            )
+            assert resummarized.status == "awaiting_confirmation"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_invalid_ruc_repeats_the_question():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Necesito factura", "Quiero una hamburguesa clasica", "Carlos",
+                "recojo en el local", "efectivo",
+            ):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="mi ruc es 12345", conversation_id=conversation_id)
+            )
+            assert rejected.status == "need_ruc"
+            assert "no reconocí" in rejected.response.lower()
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_ruc is None
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_customer_changes_mind_back_to_boleta_while_at_need_ruc():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in (
+                "Necesito factura", "Quiero una hamburguesa clasica", "Carlos",
+                "recojo en el local", "efectivo",
+            ):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            switched = await runtime.handle_turn(
+                AgentMessageIn(message="mejor boleta nomás", conversation_id=conversation_id)
+            )
+            assert switched.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.wants_factura is False
+    finally:
+        reset(conversation_id)

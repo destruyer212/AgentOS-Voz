@@ -31,3 +31,4 @@ frontend/.env*
 .DS_Store
 Thumbs.db
 .firecrawl/
+*.tar.gz

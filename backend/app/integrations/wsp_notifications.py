@@ -44,6 +44,8 @@ def build_order_notification_payload(
     customer_phone: str | None,
     notification_type: str = "order_confirmed",
     estimated_time: str | None = None,
+    document_url: str | None = None,
+    document_label: str | None = None,
 ) -> dict | None:
     """None si falta lo minimo para mandar el aviso (sin telefono no hay a
     donde escribirle)."""
@@ -76,13 +78,26 @@ def build_order_notification_payload(
     # `estimatedTime` tambien es `.optional()`).
     if estimated_time:
         payload["estimatedTime"] = estimated_time
+    # Link a la boleta/factura electronica real (PDF de SUNAT via
+    # apisunat.pe) -- omitido si no se pudo emitir (ver
+    # AgentRuntime._issue_invoice_and_notify), nunca en null, mismo motivo
+    # que "address" arriba.
+    if document_url:
+        payload["documentUrl"] = document_url
+        if document_label:
+            payload["documentLabel"] = document_label
     return payload
 
 
-async def notify_order_confirmed(order: OrderOut, customer_phone: str | None) -> None:
+async def notify_order_confirmed(
+    order: OrderOut,
+    customer_phone: str | None,
+    document_url: str | None = None,
+    document_label: str | None = None,
+) -> None:
     """Llamar SIEMPRE via fire_and_forget(), nunca con await directo desde
     el flujo de una llamada o chat en curso."""
-    await _send_notification(order, customer_phone, "order_confirmed")
+    await _send_notification(order, customer_phone, "order_confirmed", document_url=document_url, document_label=document_label)
 
 
 async def notify_order_dispatched(order: OrderOut, customer_phone: str | None) -> None:
@@ -109,11 +124,15 @@ async def _send_notification(
     customer_phone: str | None,
     notification_type: str,
     estimated_time: str | None = None,
+    document_url: str | None = None,
+    document_label: str | None = None,
 ) -> None:
     if not settings.wsp_service_url or not settings.wsp_service_api_key:
         return  # feature apagada: no configurado
 
-    payload = build_order_notification_payload(order, customer_phone, notification_type, estimated_time)
+    payload = build_order_notification_payload(
+        order, customer_phone, notification_type, estimated_time, document_url, document_label
+    )
     if payload is None:
         logger.info(
             "wsp-service: sin telefono de cliente, no se manda aviso order_id=%s type=%s",

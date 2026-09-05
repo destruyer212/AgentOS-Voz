@@ -79,6 +79,17 @@ class ConversationState:
     # tratarla como una direccion nueva que reemplaza a la anterior. None
     # si no hay ninguna direccion esperando distrito.
     pending_address_awaiting_district: str | None = None
+    # Facturacion electronica (ver domain/invoicing_services.py): si el
+    # cliente pide factura en cualquier momento de la conversacion, se
+    # marca aca y el flujo agrega una pregunta mas (RUC + razon social)
+    # antes de la confirmacion final. Por defecto (wants_factura=False) el
+    # pedido se factura como boleta automatica, sin preguntar nada nuevo.
+    wants_factura: bool = False
+    factura_ruc: str | None = None
+    factura_razon_social: str | None = None
+    # Mensaje listo para repetir si el RUC dado no se pudo reconocer (11
+    # digitos) -- mismo patron que pending_zone_rejection_message.
+    pending_ruc_rejection_message: str | None = None
 
 
 _STORE: dict[str, ConversationState] = {}

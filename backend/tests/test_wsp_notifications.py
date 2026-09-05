@@ -85,3 +85,23 @@ def test_build_payload_without_estimated_time_omits_the_key():
     # `.nullable()`).
     payload = wsp.build_order_notification_payload(_order(), "+51923648424")
     assert "estimatedTime" not in payload
+
+
+def test_build_payload_with_document_url_includes_link_and_label():
+    payload = wsp.build_order_notification_payload(
+        _order(),
+        "+51923648424",
+        document_url="https://sandbox.apisunat.pe/pdf/a4/1/x/20170939167-03-B001-100",
+        document_label="Boleta B001-100",
+    )
+    assert payload["documentUrl"].startswith("https://sandbox.apisunat.pe")
+    assert payload["documentLabel"] == "Boleta B001-100"
+
+
+def test_build_payload_without_document_url_omits_the_keys():
+    # Mismo motivo que estimatedTime/address: si no se pudo emitir el
+    # comprobante (ver AgentRuntime._issue_invoice_and_notify), el aviso de
+    # WhatsApp sale igual, solo que sin la linea del link.
+    payload = wsp.build_order_notification_payload(_order(), "+51923648424")
+    assert "documentUrl" not in payload
+    assert "documentLabel" not in payload
