@@ -51,14 +51,24 @@ from app.workflows.models import WorkflowRunResult
 # Sub-estados de recoleccion de datos de entrega, en el orden en que se piden.
 logger = logging.getLogger(__name__)
 
-_DETAIL_STATUSES = ("need_name", "need_fulfillment", "need_address", "need_payment", "need_ruc")
+_DETAIL_STATUSES = (
+    "need_name",
+    "need_fulfillment",
+    "need_address",
+    "need_payment",
+    "need_document",
+    "need_dni",
+    "need_ruc",
+)
 
 _DETAIL_PROMPTS = {
     "name": "Para el pedido, ¿a nombre de quién lo dejo?",
     "fulfillment": "¿Lo recoges tú en el local o te lo llevamos por delivery?",
     "address": "¿Cuál es la dirección de entrega?",
     "payment": "¿Pagas en efectivo, Yape o tarjeta?",
-    "ruc": "Perfecto, ¿me das el RUC y la razón social de tu empresa para la factura?",
+    "document": "¿Quieres boleta o factura?",
+    "dni": "Perfecto, para la boleta me dictas tu DNI, por favor. Son 8 dígitos.",
+    "ruc": "Perfecto, ¿me dictas el RUC de tu empresa? Son 11 dígitos.",
 }
 
 # Palabras que, en cualquier punto de la conversacion, indican que el
@@ -69,7 +79,8 @@ _DETAIL_PROMPTS = {
 # el pedido.
 _FACTURA_REQUEST_PHRASES = ("factura", "con ruc", "facturar", "a nombre de mi empresa", "a nombre de la empresa")
 
-_RUC_RE = re.compile(r"\b(\d{11})\b")
+_DNI_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")
+_RUC_RE = re.compile(r"(?<!\d)(\d{11})(?!\d)")
 
 # Categorias del menu y palabras que el cliente usa para referirse a ellas,
 # para responder preguntas tipo "¿hay algo para tomar?" con las opciones
@@ -203,6 +214,14 @@ def _match_payment(lowered: str) -> str | None:
         return "efectivo"
     if "tarjeta" in lowered:
         return "tarjeta"
+    return None
+
+
+def _match_invoice_document_type(lowered: str) -> str | None:
+    if any(k in lowered for k in ("factura", "ruc", "empresa", "razon social", "razón social")):
+        return "factura"
+    if any(k in lowered for k in ("boleta", "dni")):
+        return "boleta"
     return None
 
 
@@ -396,9 +415,13 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.hangup_after_response = False
     state.pending_zone_rejection_message = None
     state.pending_address_awaiting_district = None
+    state.invoice_document_type = None
+    state.boleta_dni = None
     state.wants_factura = False
     state.factura_ruc = None
     state.factura_razon_social = None
+    state.pending_document_rejection_message = None
+    state.pending_dni_rejection_message = None
     state.pending_ruc_rejection_message = None
 
 
@@ -407,6 +430,7 @@ async def _issue_invoice_and_notify(
     order_id: int,
     customer_phone: str | None,
     wants_factura: bool,
+    dni: str | None,
     ruc: str | None,
     razon_social: str | None,
 ) -> None:
@@ -430,9 +454,11 @@ async def _issue_invoice_and_notify(
                 order_id=order_id,
                 document_type=document_type,
                 cliente_tipo_doc="6" if wants_factura else None,
-                cliente_numero_doc=ruc if wants_factura else None,
+                cliente_numero_doc=ruc if wants_factura else dni,
                 cliente_denominacion=razon_social if wants_factura else None,
             )
+            if not wants_factura and dni:
+                request.cliente_tipo_doc = "1"
             invoice: InvoiceOut = await InvoicingService(session, tenant_id).create_from_order(request)
             if invoice.sunat_pdf_a4_url:
                 label = "Factura" if wants_factura else "Boleta"
@@ -498,6 +524,7 @@ class AgentRuntime:
             phrase in normalize_text(payload.message) for phrase in _FACTURA_REQUEST_PHRASES
         ):
             state.wants_factura = True
+            state.invoice_document_type = "factura"
             if state.status == "awaiting_confirmation" and not state.factura_ruc:
                 state.status = "need_ruc"
                 return await self._finish(state, _DETAIL_PROMPTS["ruc"], "detail.ask", [], tool_calls, None)
@@ -689,6 +716,7 @@ class AgentRuntime:
             # en blanco para el proximo pedido de la misma llamada -- si se
             # leyeran despues, siempre saldria boleta sin RUC.
             wants_factura = state.wants_factura
+            boleta_dni = state.boleta_dni
             factura_ruc = state.factura_ruc
             factura_razon_social = state.factura_razon_social
 
@@ -720,7 +748,13 @@ class AgentRuntime:
             if tenant and tenant.apisunat_token:
                 fire_and_forget(
                     _issue_invoice_and_notify(
-                        self.tenant_id, order.id, customer_phone, wants_factura, factura_ruc, factura_razon_social
+                        self.tenant_id,
+                        order.id,
+                        customer_phone,
+                        wants_factura,
+                        boleta_dni,
+                        factura_ruc,
+                        factura_razon_social,
                     )
                 )
             else:
@@ -751,7 +785,15 @@ class AgentRuntime:
         data = CustomerCreate(name=payload.customer_name or "Cliente telefonico", phone=payload.customer_phone)
         customer = await CustomerService(self.session, self.tenant_id).get_or_create(data)
         await self.session.commit()
-        state.customer = {"id": customer.id, "name": customer.name, "phone": customer.phone, "address": customer.address}
+        state.customer = {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
+            "address": customer.address,
+            "doc_type": customer.doc_type,
+            "doc_number": customer.doc_number,
+            "legal_name": customer.legal_name,
+        }
         # Si el cliente dio su nombre explicitamente, o si ya existia en la
         # ficha con un nombre real (cliente recurrente por telefono), no hace
         # falta volver a preguntarlo durante la llamada.
@@ -1022,6 +1064,17 @@ class AgentRuntime:
             return "address"
         if not state.payment_method:
             return "payment"
+        if state.channel == "phone" and not state.invoice_document_type:
+            return "document"
+        # El DNI obligatorio de la boleta es solo para voz (ver
+        # _DETAIL_PROMPTS["document"] y el pedido explicito del negocio: "en
+        # la voz pregunte boleta o factura"). En web/WhatsApp, aunque
+        # invoice_document_type termine en "boleta" (ej. un cliente que se
+        # arrepintio de pedir factura, ver need_ruc mas abajo), la boleta
+        # sigue siendo automatica con el placeholder de apisunat.pe -- no se
+        # le exige DNI a nadie que no llamo por telefono.
+        if state.channel == "phone" and state.invoice_document_type == "boleta" and not state.boleta_dni:
+            return "dni"
         if state.wants_factura and not state.factura_ruc:
             return "ruc"
         return None
@@ -1036,6 +1089,10 @@ class AgentRuntime:
             prompt = _DETAIL_PROMPTS[missing_detail]
             if missing_detail == "address" and state.pending_zone_rejection_message:
                 prompt = state.pending_zone_rejection_message
+            elif missing_detail == "document" and state.pending_document_rejection_message:
+                prompt = state.pending_document_rejection_message
+            elif missing_detail == "dni" and state.pending_dni_rejection_message:
+                prompt = state.pending_dni_rejection_message
             elif missing_detail == "ruc" and state.pending_ruc_rejection_message:
                 prompt = state.pending_ruc_rejection_message
             return await self._finish(state, prompt, "order.create", [], tool_calls, None)
@@ -1090,10 +1147,10 @@ class AgentRuntime:
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
-        # RUC: extraccion determinista (11 digitos exactos, catalogo SUNAT),
-        # no hace falta NLU. Si no aparece un RUC valido en el mensaje, se
-        # repite la pregunta explicando el motivo en vez de adivinar.
-        if current == "need_ruc":
+        # Comprobante y documento fiscal: extraccion determinista, sin NLU.
+        # La voz tiene que quedar en datos exactos: boleta/factura, DNI de 8
+        # digitos o RUC de 11.
+        if current in {"need_document", "need_dni", "need_ruc"}:
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
@@ -1285,18 +1342,90 @@ class AgentRuntime:
             state.payment_method = value
             return
 
+        if current == "need_document":
+            document_type = _match_invoice_document_type(normalize_text(raw_value))
+            if document_type not in {"boleta", "factura"}:
+                state.pending_document_rejection_message = "No te entendí bien. ¿Quieres boleta o factura?"
+                return
+
+            state.invoice_document_type = document_type
+            state.wants_factura = document_type == "factura"
+            state.pending_document_rejection_message = None
+            if document_type == "boleta":
+                state.factura_ruc = None
+                state.factura_razon_social = None
+                match = _DNI_RE.search(raw_value)
+                if match:
+                    state.boleta_dni = match.group(1)
+                    state.pending_dni_rejection_message = None
+                    if state.customer:
+                        state.customer["doc_type"] = "1"
+                        state.customer["doc_number"] = state.boleta_dni
+                        state.customer["legal_name"] = None
+                        if state.customer.get("id"):
+                            await CustomerService(self.session, self.tenant_id).update_tax_info(
+                                state.customer["id"], "1", state.boleta_dni, None
+                            )
+                            await self.session.commit()
+            else:
+                state.boleta_dni = None
+                match = _RUC_RE.search(raw_value)
+                if match:
+                    state.factura_ruc = match.group(1)
+                    state.factura_razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+                    state.pending_ruc_rejection_message = None
+                    if state.customer:
+                        state.customer["doc_type"] = "6"
+                        state.customer["doc_number"] = state.factura_ruc
+                        state.customer["legal_name"] = state.factura_razon_social
+                        if state.customer.get("id"):
+                            await CustomerService(self.session, self.tenant_id).update_tax_info(
+                                state.customer["id"], "6", state.factura_ruc, state.factura_razon_social
+                            )
+                            await self.session.commit()
+            return
+
+        if current == "need_dni":
+            match = _DNI_RE.search(raw_value)
+            if not match:
+                state.pending_dni_rejection_message = (
+                    "No reconocí un DNI válido. Para boleta son exactamente 8 dígitos. ¿Me lo repites?"
+                )
+                return
+            dni = match.group(1)
+            state.invoice_document_type = "boleta"
+            state.wants_factura = False
+            state.boleta_dni = dni
+            state.pending_dni_rejection_message = None
+            if state.customer:
+                state.customer["doc_type"] = "1"
+                state.customer["doc_number"] = dni
+                state.customer["legal_name"] = None
+                if state.customer.get("id"):
+                    await CustomerService(self.session, self.tenant_id).update_tax_info(
+                        state.customer["id"], "1", dni, None
+                    )
+                    await self.session.commit()
+            return
+
         if current == "need_ruc":
             lowered = normalize_text(raw_value)
             # Se arrepintio y prefiere boleta -- vuelve al flujo normal sin
-            # trabarse pidiendo un RUC que ya no quiere dar.
+            # trabarse pidiendo un RUC que ya no quiere dar; en voz igual se
+            # pedira el DNI obligatorio de la boleta.
             if "boleta" in lowered and not _RUC_RE.search(raw_value):
+                state.invoice_document_type = "boleta"
                 state.wants_factura = False
                 state.pending_ruc_rejection_message = None
+                match = _DNI_RE.search(raw_value)
+                if match:
+                    state.boleta_dni = match.group(1)
+                    state.pending_dni_rejection_message = None
                 return
             match = _RUC_RE.search(raw_value)
             if not match:
                 state.pending_ruc_rejection_message = (
-                    "No reconocí un RUC válido (son 11 dígitos). ¿Me lo repites, o prefieres boleta?"
+                    "No reconocí un RUC válido. Para factura son exactamente 11 dígitos. ¿Me lo repites, o prefieres boleta?"
                 )
                 return
             ruc = match.group(1)
@@ -1312,10 +1441,14 @@ class AgentRuntime:
             ).strip(" ,.-")
             if not razon_social:
                 razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+            state.invoice_document_type = "factura"
             state.factura_ruc = ruc
             state.factura_razon_social = razon_social
             state.pending_ruc_rejection_message = None
             if state.customer and state.customer.get("id"):
+                state.customer["doc_type"] = "6"
+                state.customer["doc_number"] = ruc
+                state.customer["legal_name"] = razon_social
                 await CustomerService(self.session, self.tenant_id).update_tax_info(
                     state.customer["id"], "6", ruc, razon_social
                 )
@@ -1346,10 +1479,15 @@ class AgentRuntime:
         payment_part = f", pagas con {state.payment_method}" if state.payment_method else ""
         name = state.customer.get("name") if state.customer else None
         name_part = f" A nombre de {name}." if name else ""
+        document_part = ""
+        if state.invoice_document_type == "boleta" and state.boleta_dni:
+            document_part = f" Comprobante: boleta con DNI {state.boleta_dni}."
+        elif state.invoice_document_type == "factura" and state.factura_ruc:
+            document_part = f" Comprobante: factura con RUC {state.factura_ruc}."
 
         return (
             f"Perfecto: {', '.join(lines)}. Son {_format_money_for_voice(total)}{time_part}{place_part}{payment_part}."
-            f"{name_part} ¿Confirmas?"
+            f"{name_part}{document_part} ¿Confirmas?"
         )
 
     async def _confirm_order(self, state: ConversationState, tool_calls: list[ToolCallOut]) -> OrderOut | None:

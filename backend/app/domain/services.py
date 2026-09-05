@@ -217,10 +217,11 @@ class CustomerService:
         if customer and customer.tenant_id == self.tenant_id:
             customer.address = address
 
-    async def update_tax_info(self, customer_id: int, doc_type: str, doc_number: str, legal_name: str) -> None:
-        """Guarda el RUC/razon social que dio el cliente al pedir factura
-        (ver AgentRuntime._apply_detail_answer, need_ruc) para no tener que
-        volver a pedirlo la proxima vez que llame o escriba."""
+    async def update_tax_info(
+        self, customer_id: int, doc_type: str, doc_number: str, legal_name: str | None
+    ) -> None:
+        """Guarda DNI/RUC fiscal dado por el cliente durante la facturacion
+        (ver AgentRuntime._apply_detail_answer, need_dni/need_ruc)."""
         customer = await self.session.get(Customer, customer_id)
         if customer and customer.tenant_id == self.tenant_id:
             customer.doc_type = doc_type

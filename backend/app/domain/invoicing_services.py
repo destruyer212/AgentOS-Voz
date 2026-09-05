@@ -121,7 +121,7 @@ class InvoicingService:
         numero = override_numero or (customer.doc_number if customer else None)
 
         if document_type == "factura":
-            if tipo != "6" or not numero or len(numero) != 11:
+            if tipo != "6" or not numero or not numero.isdigit() or len(numero) != 11:
                 raise InvoicingError(
                     "Para emitir factura el cliente necesita RUC valido (11 digitos, "
                     "cliente_tipo_de_documento='6'). No se puede facturar sin eso."
@@ -145,6 +145,8 @@ class InvoicingService:
             tipo, numero = None, None
         if not tipo or not numero:
             return _SIN_DNI_TIPO, _SIN_DNI_NUMERO, _SIN_DNI_DENOMINACION, _SIN_DNI_DIRECCION
+        if tipo == "1" and (not numero.isdigit() or len(numero) != 8):
+            raise InvoicingError("Para emitir boleta con DNI, el DNI debe tener exactamente 8 digitos.")
 
         denominacion = override_denominacion or (customer.name if customer else None) or (
             customer.legal_name if customer else None

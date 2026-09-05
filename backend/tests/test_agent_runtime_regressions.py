@@ -753,8 +753,17 @@ async def test_order_summary_total_is_spoken_in_soles_for_voice_tts():
             await runtime.handle_turn(
                 AgentMessageIn(message="recojo en el local", conversation_id=conversation_id, channel="phone")
             )
-            summary = await runtime.handle_turn(
+            await runtime.handle_turn(
                 AgentMessageIn(message="efectivo", conversation_id=conversation_id, channel="phone")
+            )
+            # En telefono, despues del pago se pregunta boleta/factura + el
+            # DNI de 8 digitos (pedido explicito del negocio) antes del
+            # resumen final -- ver _next_missing_detail.
+            await runtime.handle_turn(
+                AgentMessageIn(message="boleta", conversation_id=conversation_id, channel="phone")
+            )
+            summary = await runtime.handle_turn(
+                AgentMessageIn(message="12345678", conversation_id=conversation_id, channel="phone")
             )
 
         response = summary.response.lower()
@@ -1745,5 +1754,136 @@ async def test_customer_changes_mind_back_to_boleta_while_at_need_ruc():
             assert switched.status == "awaiting_confirmation"
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.wants_factura is False
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_asks_boleta_or_factura_before_confirmation():
+    # Pedido explicito del negocio: en la voz (nunca en web/WhatsApp) se
+    # pregunta boleta o factura antes de confirmar, sin importar si el
+    # cliente pidio factura por su cuenta o no.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            assert turn.status == "need_document"
+            assert "boleta" in turn.response.lower() and "factura" in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_boleta_requires_exact_8_digit_dni():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+
+            asked_dni = await runtime.handle_turn(
+                AgentMessageIn(message="boleta", conversation_id=conversation_id, channel="phone")
+            )
+            assert asked_dni.status == "need_dni"
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="mi dni es 1234", conversation_id=conversation_id, channel="phone")
+            )
+            assert rejected.status == "need_dni"
+            assert "8 dígitos" in rejected.response or "dni" in rejected.response.lower()
+
+            accepted = await runtime.handle_turn(
+                AgentMessageIn(message="45678912", conversation_id=conversation_id, channel="phone")
+            )
+            assert accepted.status == "awaiting_confirmation"
+            assert "45678912" in accepted.response
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.boleta_dni == "45678912"
+            assert state.invoice_document_type == "boleta"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_factura_requires_exact_11_digit_ruc():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+
+            asked_ruc = await runtime.handle_turn(
+                AgentMessageIn(message="factura", conversation_id=conversation_id, channel="phone")
+            )
+            assert asked_ruc.status == "need_ruc"
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="mi ruc es 123", conversation_id=conversation_id, channel="phone")
+            )
+            assert rejected.status == "need_ruc"
+
+            accepted = await runtime.handle_turn(
+                AgentMessageIn(message="20123456789", conversation_id=conversation_id, channel="phone")
+            )
+            assert accepted.status == "awaiting_confirmation"
+            assert "20123456789" in accepted.response
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_ruc == "20123456789"
+            assert state.invoice_document_type == "factura"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_can_give_document_type_and_dni_in_one_breath():
+    # Respuesta natural por voz: "boleta, 45678912" en un solo turno en vez
+    # de dos preguntas separadas.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="boleta, 45678912", conversation_id=conversation_id, channel="phone")
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.boleta_dni == "45678912"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_web_channel_never_asks_for_document_type_or_dni():
+    # Solo la voz exige boleta/factura + DNI/RUC obligatorio -- web y
+    # WhatsApp mantienen el comportamiento historico (boleta automatica).
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="web")
+                )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.invoice_document_type is None
+            assert state.boleta_dni is None
     finally:
         reset(conversation_id)

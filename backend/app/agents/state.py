@@ -28,7 +28,7 @@ class ConversationState:
     tenant_id: str
     channel: str = "web"
     # collecting | need_name | need_fulfillment | need_address | need_payment |
-    # awaiting_confirmation | closed
+    # need_document | need_dni | need_ruc | awaiting_confirmation | closed
     status: str = "collecting"
     items: list[OrderLineDraft] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
@@ -79,16 +79,20 @@ class ConversationState:
     # tratarla como una direccion nueva que reemplaza a la anterior. None
     # si no hay ninguna direccion esperando distrito.
     pending_address_awaiting_district: str | None = None
-    # Facturacion electronica (ver domain/invoicing_services.py): si el
-    # cliente pide factura en cualquier momento de la conversacion, se
-    # marca aca y el flujo agrega una pregunta mas (RUC + razon social)
-    # antes de la confirmacion final. Por defecto (wants_factura=False) el
-    # pedido se factura como boleta automatica, sin preguntar nada nuevo.
+    # Facturacion electronica (ver domain/invoicing_services.py). En voz se
+    # pregunta explicitamente si quiere boleta o factura antes de confirmar:
+    # boleta exige DNI de 8 digitos, factura exige RUC de 11. En web/WhatsApp
+    # se conserva el comportamiento historico: boleta automatica salvo que el
+    # cliente pida factura.
+    invoice_document_type: str | None = None  # boleta | factura
+    boleta_dni: str | None = None
     wants_factura: bool = False
     factura_ruc: str | None = None
     factura_razon_social: str | None = None
-    # Mensaje listo para repetir si el RUC dado no se pudo reconocer (11
-    # digitos) -- mismo patron que pending_zone_rejection_message.
+    # Mensajes listos para repetir si el comprobante/documento no se pudo
+    # reconocer -- mismo patron que pending_zone_rejection_message.
+    pending_document_rejection_message: str | None = None
+    pending_dni_rejection_message: str | None = None
     pending_ruc_rejection_message: str | None = None
 
 
