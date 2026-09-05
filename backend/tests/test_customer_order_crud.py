@@ -211,3 +211,25 @@ async def test_close_stale_web_conversations_only_touches_old_inactive_web():
         assert stale_web.outcome == "session.timeout"
         assert recent_web.status == "active"  # muy reciente, no se toca
         assert stale_phone.status == "active"  # canal phone nunca se toca aca
+
+
+@pytest.mark.asyncio
+async def test_record_whatsapp_status_persists_status_and_timestamp():
+    # Ver AgentRuntime._issue_invoice_and_notify / _notify_only: el panel de
+    # Llamadas necesita saber de verdad si el aviso llego, no solo que se
+    # disparo.
+    async with AsyncSessionLocal() as session:
+        order_svc = OrderService(session, settings.default_tenant_id)
+        products = await session.execute(select(Product).limit(1))
+        product = products.scalars().first()
+        order = await order_svc.create_confirmed_order(
+            OrderCreate(items=[OrderItemIn(product_id=product.id, quantity=1)])
+        )
+        assert order.whatsapp_status is None
+        assert order.whatsapp_sent_at is None
+
+        await order_svc.record_whatsapp_status(order.id, "sent")
+
+        updated = await order_svc.get(order.id)
+        assert updated.whatsapp_status == "sent"
+        assert updated.whatsapp_sent_at is not None

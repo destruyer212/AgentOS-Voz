@@ -73,6 +73,7 @@ export default async function LlamadaDetailPage({ params }: { params: Promise<{ 
           detailStatus={convo.detail_status}
           outcome={convo.outcome}
           order={convo.order}
+          invoice={convo.invoice}
           customerName={convo.customer_name}
           channel={convo.channel}
         />

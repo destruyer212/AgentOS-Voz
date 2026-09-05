@@ -9,9 +9,11 @@ import {
   Database,
   GitBranch,
   MapPin,
+  MessageCircle,
   PackageCheck,
   PhoneCall,
   PhoneOff,
+  Receipt,
   Route,
   ShieldCheck,
   ShoppingCart,
@@ -27,9 +29,12 @@ import {
   formatCurrency,
   fulfillmentLabel,
   intentLabel,
+  invoiceDocumentLabel,
   paymentMethodLabel,
+  sunatStatusLabel,
+  whatsappStatusLabel,
 } from "@/lib/format";
-import type { OrderOut } from "@/lib/types";
+import type { InvoiceOut, OrderOut } from "@/lib/types";
 
 // Estados de pedido que ya no avanzan mas (ver
 // backend/app/domain/services.py, _ORDER_STATUS_TRANSITIONS): una vez aca,
@@ -80,14 +85,20 @@ const DETAIL_STEPS = [
 // necesita medir el DOM, igual que el min-width fijo que ya usaba este
 // panel antes.
 const VIEW_W = 1180;
-const VIEW_W_WITH_FULFILLMENT = 1870;
+const VIEW_W_WITH_FULFILLMENT = 2330;
 const VIEW_H = 340;
 const NODE = 68; // lado del cuadro-icono, como los nodos de n8n
 const HALF = NODE / 2;
 const ROW_Y = 150;
 const BRANCH_TOP_Y = 55;
 const BRANCH_BOTTOM_Y = 245;
-const CENTERS = { n1: 110, n2: 340, n3: 570, n4: 800, n5: 1030, n6: 1260, n7: 1490, n8: 1720 };
+// n6/n7 = comprobante SUNAT + aviso de WhatsApp (pasan casi al toque de
+// confirmado el pedido, en paralelo -- ver AgentRuntime._issue_invoice_and_notify),
+// n8/n9/n10 = el pipeline de cocina que ya existia.
+const CENTERS = {
+  n1: 110, n2: 340, n3: 570, n4: 800, n5: 1030,
+  n6: 1260, n7: 1490, n8: 1720, n9: 1950, n10: 2180,
+};
 
 interface GraphNode {
   key: string;
@@ -111,6 +122,7 @@ export function CallFlowPipeline({
   detailStatus,
   outcome,
   order,
+  invoice,
   customerName,
   channel,
 }: {
@@ -118,6 +130,7 @@ export function CallFlowPipeline({
   detailStatus: string | null;
   outcome: string | null;
   order?: OrderOut | null;
+  invoice?: InvoiceOut | null;
   customerName?: string | null;
   channel?: string | null;
 }) {
@@ -216,6 +229,18 @@ export function CallFlowPipeline({
     icon: PhoneOff,
   };
 
+  // Comprobante SUNAT y aviso de WhatsApp: pasan casi al toque de
+  // confirmado el pedido, en paralelo, fuera del turno (ver
+  // AgentRuntime._issue_invoice_and_notify) -- por eso van justo despues de
+  // "Pedido creado" y ANTES del pipeline de cocina, no al final: cronologicamente
+  // ya pasaron para cuando cocina siquiera se entera del pedido.
+  const invoiceReached = Boolean(invoice);
+  const invoiceCurrent = orderIsLive && !invoiceReached;
+  const invoiceRejected = invoice?.sunat_status === "rejected";
+  const whatsappReached = order?.whatsapp_status === "sent";
+  const whatsappFailed = order?.whatsapp_status === "failed";
+  const whatsappCurrent = orderIsLive && invoiceReached && !whatsappReached && !whatsappFailed;
+
   // Umbral de "reached" (checkmark) de cada nodo en la escala -1..2 de
   // fulfillmentStageIndex: Cocina esta reached en cuanto entra a preparar
   // (0+), Motorizado/Recojo en cuanto sale/esta listo (1+), Entregado solo
@@ -233,38 +258,59 @@ export function CallFlowPipeline({
       key: "n6",
       cx: CENTERS.n6,
       cy: BRANCH_TOP_Y,
+      title: "Comprobante",
+      subtitle: invoice
+        ? `${invoiceDocumentLabel(invoice.document_type)} · ${sunatStatusLabel(invoice.sunat_status)}`
+        : "emitiendo…",
+      icon: Receipt,
+    },
+    {
+      key: "n7",
+      cx: CENTERS.n7,
+      cy: BRANCH_TOP_Y,
+      title: "WhatsApp",
+      subtitle: whatsappStatusLabel(order?.whatsapp_status ?? null),
+      icon: MessageCircle,
+    },
+    {
+      key: "n8",
+      cx: CENTERS.n8,
+      cy: BRANCH_TOP_Y,
       title: "Cocina",
       subtitle: kitchenReached ? "aceptó el pedido" : "por aceptar",
       icon: ChefHat,
     },
     {
-      key: "n7",
-      cx: CENTERS.n7,
+      key: "n9",
+      cx: CENTERS.n9,
       cy: BRANCH_TOP_Y,
       title: isDelivery ? "Motorizado" : "Recojo en local",
       subtitle: isDelivery ? "salió a entregar" : "listo para recoger",
       icon: isDelivery ? Bike : Store,
     },
     {
-      key: "n8",
-      cx: CENTERS.n8,
+      key: "n10",
+      cx: CENTERS.n10,
       cy: BRANCH_TOP_Y,
       title: "Entregado",
       subtitle: "pedido cerrado",
       icon: PackageCheck,
     },
   ];
-  // origin nodes de cada tramo: successNode -> n6 -> n7 -> n8. El "traveled"
-  // de cada tramo es el "reached" del nodo al que llega.
+  // origin nodes de cada tramo: successNode -> comprobante -> whatsapp ->
+  // cocina -> motorizado/recojo -> entregado. El "traveled" de cada tramo
+  // es el "reached" del nodo al que llega; "flowing" es el tramo que lleva
+  // al nodo que esta "current" en este momento (el siguiente sin resolver).
   const fulfillmentOrigins = [successNode, ...fulfillmentNodes];
-  const fulfillmentReachedByTarget = [kitchenReached, dispatchReached, deliveredReached];
-  const fulfillmentEdges = [0, 1, 2].map((i) => {
+  const fulfillmentReachedByTarget = [
+    invoiceReached, whatsappReached || whatsappFailed, kitchenReached, dispatchReached, deliveredReached,
+  ];
+  const fulfillmentCurrentByTarget = [invoiceCurrent, whatsappCurrent, kitchenCurrent, dispatchCurrent, false];
+  const fulfillmentEdges = [0, 1, 2, 3, 4].map((i) => {
     const from = fulfillmentOrigins[i]!;
     const to = fulfillmentOrigins[i + 1]!;
     const traveled = fulfillmentReachedByTarget[i]!;
-    // El tramo que "esta viajando" es el que lleva al proximo nodo sin
-    // pasar todavia -- el mismo que esta en estado "current".
-    const flowing = orderIsLive && ((i === 0 && kitchenCurrent) || (i === 1 && dispatchCurrent));
+    const flowing = orderIsLive && fulfillmentCurrentByTarget[i]!;
     return {
       key: `fedge-${i}`,
       d: `M${from.cx + HALF},${from.cy} L${to.cx - HALF},${to.cy}`,
@@ -454,10 +500,22 @@ export function CallFlowPipeline({
 
             {showFulfillment && (
               <>
-                <FlowNodeCard node={fulfillmentNodes[0]!} reached={kitchenReached} current={kitchenCurrent} />
-                <FlowNodeCard node={fulfillmentNodes[1]!} reached={dispatchReached} current={dispatchCurrent} />
                 <FlowNodeCard
-                  node={fulfillmentNodes[2]!}
+                  node={fulfillmentNodes[0]!}
+                  reached={invoiceReached}
+                  current={invoiceCurrent}
+                  tone={invoiceRejected ? "failure" : "hud"}
+                />
+                <FlowNodeCard
+                  node={fulfillmentNodes[1]!}
+                  reached={whatsappReached || whatsappFailed}
+                  current={whatsappCurrent}
+                  tone={whatsappFailed ? "failure" : "hud"}
+                />
+                <FlowNodeCard node={fulfillmentNodes[2]!} reached={kitchenReached} current={kitchenCurrent} />
+                <FlowNodeCard node={fulfillmentNodes[3]!} reached={dispatchReached} current={dispatchCurrent} />
+                <FlowNodeCard
+                  node={fulfillmentNodes[4]!}
                   reached={deliveredReached}
                   current={false}
                   tone="success"
@@ -529,6 +587,90 @@ export function CallFlowPipeline({
               <SignalRow label="Total" value={order ? formatCurrency(order.total) : "Pendiente"} strong={Boolean(order)} />
             </dl>
           </div>
+
+          {order && order.items.length > 0 && (
+            <div className="mt-4 border-t border-surface-700 pt-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">Se pidió</p>
+              <ul className="mt-3 space-y-1 text-sm text-slate-300">
+                {order.items.map((item, idx) => (
+                  <li key={idx} className="flex items-baseline justify-between gap-2">
+                    <span className="truncate">
+                      <span className="font-semibold text-white">{item.quantity}×</span> {item.product_name}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-slate-500">
+                      {formatCurrency(item.unit_price * item.quantity)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {showFulfillment && (
+            <div className="mt-4 border-t border-surface-700 pt-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                Comprobante y aviso
+              </p>
+              <div className="mt-3 space-y-2">
+                <div
+                  className={[
+                    "flex items-center justify-between gap-2 border px-2.5 py-2 text-xs",
+                    invoiceRejected
+                      ? "border-accent-rose/30 bg-accent-rose/5 text-accent-rose"
+                      : invoiceReached
+                        ? "border-accent-teal/25 bg-accent-teal/5 text-slate-300"
+                        : "border-hud-400/40 bg-hud-500/10 text-hud-300",
+                  ].join(" ")}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Receipt size={13} className="shrink-0" />
+                    <span className="truncate">
+                      {invoice
+                        ? `${invoiceDocumentLabel(invoice.document_type)} ${invoice.serie}-${String(invoice.numero).padStart(3, "0")}`
+                        : "Emitiendo comprobante…"}
+                    </span>
+                  </span>
+                  {invoice?.sunat_pdf_a4_url ? (
+                    <a
+                      href={invoice.sunat_pdf_a4_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 font-medium text-hud-300 underline decoration-dotted underline-offset-2 hover:text-hud-200"
+                    >
+                      Ver PDF
+                    </a>
+                  ) : (
+                    <span className="shrink-0 font-mono uppercase tracking-wide">
+                      {invoice ? sunatStatusLabel(invoice.sunat_status) : "…"}
+                    </span>
+                  )}
+                </div>
+                {invoice?.cliente_numero_doc && (
+                  <p className="px-0.5 text-xs text-slate-500">
+                    {invoice.document_type === "factura" ? "RUC" : "DNI"}: {invoice.cliente_numero_doc}
+                    {invoice.cliente_denominacion ? ` · ${invoice.cliente_denominacion}` : ""}
+                  </p>
+                )}
+
+                <div
+                  className={[
+                    "flex items-center gap-2 border px-2.5 py-2 text-xs",
+                    whatsappFailed
+                      ? "border-accent-rose/30 bg-accent-rose/5 text-accent-rose"
+                      : whatsappReached
+                        ? "border-accent-teal/25 bg-accent-teal/5 text-slate-300"
+                        : "border-hud-400/40 bg-hud-500/10 text-hud-300",
+                  ].join(" ")}
+                >
+                  <MessageCircle size={13} className="shrink-0" />
+                  <span className="flex-1 truncate">
+                    Mensaje al WhatsApp{order?.customer_id ? "" : " del cliente"}: {whatsappStatusLabel(order?.whatsapp_status ?? null)}
+                  </span>
+                  {whatsappReached && <CheckCircle2 size={13} className="shrink-0 text-accent-teal" />}
+                </div>
+              </div>
+            </div>
+          )}
         </aside>
       </div>
     </HudPanel>

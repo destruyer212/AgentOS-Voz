@@ -556,7 +556,35 @@ async def _issue_invoice_and_notify(
 
         order_out = await OrderService(session, tenant_id).get(order_id)
 
-    await notify_order_confirmed(order_out, customer_phone, document_url=document_url, document_label=document_label)
+    whatsapp_status = await notify_order_confirmed(
+        order_out, customer_phone, document_url=document_url, document_label=document_label
+    )
+    async with AsyncSessionLocal() as session:
+        await OrderService(session, tenant_id).record_whatsapp_status(order_id, whatsapp_status)
+
+
+async def _notify_only(tenant_id: str, order_id: int, customer_phone: str | None) -> None:
+    """Mismo aviso de "pedido confirmado" que _issue_invoice_and_notify,
+    pero sin intentar emitir ningun comprobante -- para tenants que todavia
+    no configuraron su token de apisunat.pe (ver el punto donde se confirma
+    el pedido: ahi se decide cual de las dos correr).
+
+    Corte temprano si wsp-service tampoco esta configurado: sin eso no hay
+    nada real que trackear (notify_order_confirmed devolveria
+    "skipped_not_configured" de todos modos), y evita abrir sesiones de DB
+    de mas en cada pedido confirmado -- importa sobre todo en tests, que
+    corren todos contra el mismo archivo SQLite compartido y no tienen ni
+    apisunat_token ni wsp-service configurados: sin este corte, cada pedido
+    confirmado en CUALQUIER test disparaba dos sesiones de background
+    peleando por el mismo archivo con la sesion del test ("database is
+    locked")."""
+    if not settings.wsp_service_url or not settings.wsp_service_api_key:
+        return
+    async with AsyncSessionLocal() as session:
+        order_out = await OrderService(session, tenant_id).get(order_id)
+    whatsapp_status = await notify_order_confirmed(order_out, customer_phone)
+    async with AsyncSessionLocal() as session:
+        await OrderService(session, tenant_id).record_whatsapp_status(order_id, whatsapp_status)
 
 
 class AgentRuntime:
@@ -843,7 +871,7 @@ class AgentRuntime:
                     )
                 )
             else:
-                fire_and_forget(notify_order_confirmed(order, customer_phone))
+                fire_and_forget(_notify_only(self.tenant_id, order.id, customer_phone))
             time_part = f" para las {order.requested_time}" if order.requested_time else ""
             response = (
                 f"Listo, pedido confirmado{time_part}, son {_format_money_for_voice(order.total)}. "

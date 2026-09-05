@@ -94,29 +94,35 @@ async def notify_order_confirmed(
     customer_phone: str | None,
     document_url: str | None = None,
     document_label: str | None = None,
-) -> None:
+) -> str:
     """Llamar SIEMPRE via fire_and_forget(), nunca con await directo desde
-    el flujo de una llamada o chat en curso."""
-    await _send_notification(order, customer_phone, "order_confirmed", document_url=document_url, document_label=document_label)
+    el flujo de una llamada o chat en curso. Devuelve el estado del envio
+    ("sent"/"failed"/"skipped_not_configured"/"skipped_no_phone") para que
+    quien la llama (ver AgentRuntime._issue_invoice_and_notify) pueda
+    guardarlo en el pedido y mostrarlo de verdad en el panel de Llamadas,
+    en vez de asumir que "se disparo" significa "llego"."""
+    return await _send_notification(
+        order, customer_phone, "order_confirmed", document_url=document_url, document_label=document_label
+    )
 
 
-async def notify_order_dispatched(order: OrderOut, customer_phone: str | None) -> None:
+async def notify_order_dispatched(order: OrderOut, customer_phone: str | None) -> str:
     """Aviso de "ya salio con el motorizado" -- se dispara cuando el
     encargado marca el pedido como "dispatched" desde el panel de Pedidos
     (ver app/api/v1/orders.py). Llamar SIEMPRE via fire_and_forget(), nunca
     con await directo desde el handler HTTP: un wsp-service caido o lento
     jamas debe demorar la respuesta al encargado que esta despachando."""
-    await _send_notification(
+    return await _send_notification(
         order, customer_phone, "order_on_the_way", estimated_time=settings.delivery_eta_label
     )
 
 
-async def notify_order_ready_for_pickup(order: OrderOut, customer_phone: str | None) -> None:
+async def notify_order_ready_for_pickup(order: OrderOut, customer_phone: str | None) -> str:
     """Aviso de "ya esta listo para recoger" -- se dispara cuando un pedido
     de recojo en el local (nunca delivery, ese usa notify_order_dispatched)
     pasa a "ready". Mismo contrato que notify_order_dispatched: siempre
     fire_and_forget()."""
-    await _send_notification(order, customer_phone, "order_ready_for_pickup")
+    return await _send_notification(order, customer_phone, "order_ready_for_pickup")
 
 
 async def _send_notification(
@@ -126,9 +132,9 @@ async def _send_notification(
     estimated_time: str | None = None,
     document_url: str | None = None,
     document_label: str | None = None,
-) -> None:
+) -> str:
     if not settings.wsp_service_url or not settings.wsp_service_api_key:
-        return  # feature apagada: no configurado
+        return "skipped_not_configured"  # feature apagada: no configurado
 
     payload = build_order_notification_payload(
         order, customer_phone, notification_type, estimated_time, document_url, document_label
@@ -138,7 +144,7 @@ async def _send_notification(
             "wsp-service: sin telefono de cliente, no se manda aviso order_id=%s type=%s",
             order.id, notification_type,
         )
-        return
+        return "skipped_no_phone"
 
     url = f"{settings.wsp_service_url.rstrip('/')}/api/notifications/order"
     try:
@@ -149,14 +155,16 @@ async def _send_notification(
                 "wsp-service: aviso encolado order_id=%s type=%s status_code=%s",
                 order.id, notification_type, resp.status_code,
             )
-        else:
-            logger.warning(
-                "wsp-service: respuesta inesperada order_id=%s type=%s status_code=%s body=%s",
-                order.id, notification_type, resp.status_code, resp.text[:300],
-            )
+            return "sent"
+        logger.warning(
+            "wsp-service: respuesta inesperada order_id=%s type=%s status_code=%s body=%s",
+            order.id, notification_type, resp.status_code, resp.text[:300],
+        )
+        return "failed"
     except Exception:
         # A proposito sin re-lanzar: esto corre desatado del turno real, no
         # hay nadie mas escuchando este error salvo el log.
         logger.exception(
             "wsp-service: fallo al mandar aviso de WhatsApp order_id=%s type=%s", order.id, notification_type
         )
+        return "failed"

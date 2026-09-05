@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.domain.invoicing_schemas import InvoiceOut
+
 
 class ProductOut(BaseModel):
     id: int
@@ -82,6 +84,9 @@ class OrderOut(BaseModel):
     delivery_address: str | None = None
     payment_method: str | None = None
     total: float
+    # --- Aviso de WhatsApp (ver app/integrations/wsp_notifications.py) ---
+    whatsapp_status: str | None = None  # sent | failed | skipped_not_configured | skipped_no_phone
+    whatsapp_sent_at: datetime | None = None
     items: list[OrderItemOut]
 
 
@@ -119,6 +124,10 @@ class ConversationOut(BaseModel):
 class ConversationDetailOut(ConversationOut):
     transcript: list[ConversationTurnOut]
     order: OrderOut | None = None
+    # Boleta/factura real emitida para el pedido de esta llamada (ver
+    # app/domain/invoicing_services.py) -- None si el pedido no se llego a
+    # confirmar, o si el negocio no tiene facturacion electronica activada.
+    invoice: InvoiceOut | None = None
 
 
 class ToolCallOut(BaseModel):

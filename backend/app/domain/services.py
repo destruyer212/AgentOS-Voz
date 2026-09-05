@@ -462,6 +462,19 @@ class OrderService:
             return None
         return order.customer.phone
 
+    async def record_whatsapp_status(self, order_id: int, status: str) -> None:
+        """Deja constancia real de si el aviso de WhatsApp llego o no (ver
+        app/agents/runtime.py, _issue_invoice_and_notify) -- para que el
+        panel de Llamadas pueda mostrarlo tal cual, en vez de asumir que
+        "se disparo" significa "llego". Silencioso si el pedido ya no
+        existe (no deberia pasar, pero esto corre en un turno de background
+        separado del que creo el pedido)."""
+        order = await self.session.get(Order, order_id)
+        if order and order.tenant_id == self.tenant_id:
+            order.whatsapp_status = status
+            order.whatsapp_sent_at = datetime.now(UTC)
+            await self.session.commit()
+
     async def get(self, order_id: int) -> OrderOut:
         order = await self.session.scalar(
             select(Order)
@@ -515,6 +528,8 @@ class OrderService:
             delivery_address=order.delivery_address,
             payment_method=order.payment_method,
             total=order.total,
+            whatsapp_status=order.whatsapp_status,
+            whatsapp_sent_at=order.whatsapp_sent_at,
             items=[
                 OrderItemOut(
                     product_id=item.product_id,

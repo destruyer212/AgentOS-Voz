@@ -303,3 +303,23 @@ async def test_build_payload_matches_apisunat_field_names():
             "valor_unitario", "porcentaje_igv", "codigo_tipo_afectacion_igv", "nombre_tributo",
         }
         assert line["unidad_de_medida"] == "NIU"
+
+
+@pytest.mark.asyncio
+async def test_get_by_order_returns_the_invoice_for_that_order():
+    # Usado por GET /api/v1/conversations/{id} para mostrar la boleta/
+    # factura real de la llamada en el panel -- ver api/v1/conversations.py.
+    async with AsyncSessionLocal() as session:
+        svc = InvoicingService(session, settings.default_tenant_id)
+        order_id = await _make_order(session)
+
+        assert await svc.get_by_order(order_id) is None  # todavia no se emitio nada
+
+        invoice = await svc.create_from_order(
+            InvoiceFromOrderRequest(order_id=order_id, document_type="boleta")
+        )
+        found = await svc.get_by_order(order_id)
+        assert found is not None
+        assert found.id == invoice.id
+        assert found.serie == invoice.serie
+        assert found.numero == invoice.numero

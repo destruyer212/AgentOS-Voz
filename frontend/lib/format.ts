@@ -84,6 +84,46 @@ export function fulfillmentLabel(type: string): string {
   return FULFILLMENT_LABEL[type] ?? type;
 }
 
+// Comprobante electronico (ver backend/app/domain/invoicing_services.py) y
+// aviso de WhatsApp real de la confirmacion -- ambos pasan en paralelo,
+// fuera del turno, apenas se confirma el pedido (AgentRuntime.
+// _issue_invoice_and_notify).
+export const INVOICE_DOCUMENT_LABEL: Record<string, string> = {
+  boleta: "Boleta",
+  factura: "Factura",
+  nota_credito: "Nota de crédito",
+  nota_debito: "Nota de débito",
+};
+
+export function invoiceDocumentLabel(type: string): string {
+  return INVOICE_DOCUMENT_LABEL[type] ?? type;
+}
+
+export const SUNAT_STATUS_LABEL: Record<string, string> = {
+  draft: "sin SUNAT activado",
+  sent: "procesando",
+  accepted: "aceptado por SUNAT",
+  pending: "procesando",
+  rejected: "rechazado por SUNAT",
+  voided: "anulado",
+};
+
+export function sunatStatusLabel(status: string): string {
+  return SUNAT_STATUS_LABEL[status] ?? status;
+}
+
+export const WHATSAPP_STATUS_LABEL: Record<string, string> = {
+  sent: "enviado",
+  failed: "no se pudo enviar",
+  skipped_not_configured: "WhatsApp no configurado",
+  skipped_no_phone: "sin número de teléfono",
+};
+
+export function whatsappStatusLabel(status: string | null): string {
+  if (!status) return "enviando…";
+  return WHATSAPP_STATUS_LABEL[status] ?? status;
+}
+
 // Espejo de _MENU_CATEGORY_LABELS en agents/runtime.py -- mismas categorias
 // que usa el agente para responder "que tienen de X", para que el panel
 // hable el mismo idioma que la llamada.

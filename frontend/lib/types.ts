@@ -53,7 +53,36 @@ export interface OrderOut {
   delivery_address: string | null;
   payment_method: "efectivo" | "yape" | "plin" | "tarjeta" | string | null;
   total: number;
+  // Aviso de WhatsApp real (ver app/integrations/wsp_notifications.py) --
+  // null mientras el aviso todavia no se intento (corre en paralelo fuera
+  // del turno que confirma el pedido).
+  whatsapp_status: WhatsappStatus | null;
+  whatsapp_sent_at: string | null;
   items: OrderItemOut[];
+}
+
+export type WhatsappStatus = "sent" | "failed" | "skipped_not_configured" | "skipped_no_phone" | string;
+
+// Espejo de InvoiceOut (backend/app/domain/invoicing_schemas.py) -- solo
+// los campos que de verdad se muestran en el panel de Llamadas.
+export type InvoiceDocumentType = "boleta" | "factura" | "nota_credito" | "nota_debito" | string;
+export type SunatStatus = "draft" | "sent" | "accepted" | "pending" | "rejected" | "voided" | string;
+
+export interface InvoiceOut {
+  id: number;
+  order_id: number | null;
+  document_type: InvoiceDocumentType;
+  serie: string;
+  numero: number;
+  cliente_tipo_doc: string;
+  cliente_numero_doc: string | null;
+  cliente_denominacion: string;
+  total: number;
+  sunat_status: SunatStatus;
+  sunat_message: string | null;
+  sunat_pdf_a4_url: string | null;
+  sunat_pdf_ticket_url: string | null;
+  created_at: string;
 }
 
 // Flujo real cocina -> motorizado -> entregado (ver panel de Pedidos y
@@ -128,6 +157,7 @@ export interface ConversationTurnOut {
 export interface ConversationDetailOut extends ConversationOut {
   transcript: ConversationTurnOut[];
   order: OrderOut | null;
+  invoice: InvoiceOut | null;
 }
 
 export interface BusinessInfoOut {

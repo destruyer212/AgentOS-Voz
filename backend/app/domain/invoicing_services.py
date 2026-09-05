@@ -442,6 +442,19 @@ class InvoicingService:
             raise InvoicingError("Comprobante no encontrado.")
         return _to_out(invoice)
 
+    async def get_by_order(self, order_id: int) -> InvoiceOut | None:
+        """Para el panel de Llamadas (ver app/api/v1/conversations.py):
+        mostrar de una si el pedido de esta llamada ya tiene su boleta/
+        factura, y en que estado quedo. None si todavia no se emitio nada
+        (o si fallo antes de crear el borrador -- ej. sin serie activa)."""
+        invoice = await self.session.scalar(
+            select(Invoice)
+            .options(selectinload(Invoice.items))
+            .where(Invoice.tenant_id == self.tenant_id, Invoice.order_id == order_id)
+            .order_by(Invoice.id.desc())
+        )
+        return _to_out(invoice) if invoice else None
+
     async def list_recent(self, limit: int = 50) -> list[InvoiceOut]:
         invoices = (
             await self.session.execute(

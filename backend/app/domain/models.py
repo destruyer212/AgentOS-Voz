@@ -1,4 +1,6 @@
-from sqlalchemy import Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.db.base import Base, TenantScopedMixin, TimestampMixin
@@ -88,6 +90,14 @@ class Order(Base, TenantScopedMixin, TimestampMixin):
     fulfillment_type: Mapped[str | None] = mapped_column(String(20))  # delivery | pickup
     delivery_address: Mapped[str | None] = mapped_column(String(240))
     payment_method: Mapped[str | None] = mapped_column(String(20))  # efectivo | yape | plin | tarjeta
+    # --- Aviso de WhatsApp (ver app/agents/runtime.py, _issue_invoice_and_notify) ---
+    # "sent" | "failed" | "skipped_not_configured" | "skipped_no_phone". None
+    # = todavia no se intento (pedido recien creado, el aviso corre en
+    # paralelo fuera del turno). Se guarda para que el panel de Llamadas
+    # pueda mostrar de verdad si el cliente recibio su confirmacion, en vez
+    # de asumir que "se disparo" == "llego".
+    whatsapp_status: Mapped[str | None] = mapped_column(String(30))
+    whatsapp_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     customer: Mapped[Customer | None] = relationship()
     items: Mapped[list["OrderItem"]] = relationship(cascade="all, delete-orphan")

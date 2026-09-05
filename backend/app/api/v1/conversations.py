@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_tenant_id
+from app.domain.invoicing_services import InvoicingService
 from app.domain.models import Conversation
 from app.domain.schemas import ConversationDetailOut, ConversationOut, ConversationTurnOut
 from app.domain.services import ConversationService, OrderService
@@ -67,9 +68,11 @@ async def get_conversation(
         raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
 
     order = await OrderService(session, tenant_id).get_by_conversation(external_id)
+    invoice = await InvoicingService(session, tenant_id).get_by_order(order.id) if order else None
     summary = _to_summary(convo)
     return ConversationDetailOut(
         **summary.model_dump(),
         transcript=_parse_transcript(convo.transcript),
         order=order,
+        invoice=invoice,
     )
