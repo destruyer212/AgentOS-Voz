@@ -11,6 +11,11 @@ class ProductOut(BaseModel):
     price: float
     category: str
     stock_available: int
+    # --- Campos SUNAT (ver invoicing_services.py) ---
+    unidad_medida: str = "NIU"  # catalogo 03: NIU=bienes, ZZ=servicios
+    igv_affectation_code: str = "10"  # catalogo 07: 10=gravado, 20=exonerado, 21=gratuito, 30=inafecto
+    igv_percentage: float = 18.0
+    igv_tribute_name: str = "IGV"
 
 
 class CustomerCreate(BaseModel):
@@ -18,6 +23,11 @@ class CustomerCreate(BaseModel):
     phone: str | None = None
     address: str | None = None
     notes: str | None = None
+    # --- Datos fiscales (catalogo 06 SUNAT), opcionales -- ver
+    # invoicing_services.resolve_cliente para como se usan al facturar ---
+    doc_type: str | None = None  # "1"=DNI, "6"=RUC, "4"=CE, "7"=Pasaporte, "0"=Sin doc
+    doc_number: str | None = None
+    legal_name: str | None = None  # razon social, solo si doc_type="6"
 
 
 class CustomerOut(CustomerCreate):
@@ -32,6 +42,9 @@ class CustomerUpdate(BaseModel):
     phone: str | None = None
     address: str | None = None
     notes: str | None = None
+    doc_type: str | None = None
+    doc_number: str | None = None
+    legal_name: str | None = None
 
 
 class OrderItemIn(BaseModel):

@@ -17,7 +17,10 @@ async def list_customers(
 ) -> list[CustomerOut]:
     customers = await CustomerService(session, tenant_id).list_all(q, limit=limit)
     return [
-        CustomerOut(id=c.id, name=c.name, phone=c.phone, address=c.address, notes=c.notes)
+        CustomerOut(
+            id=c.id, name=c.name, phone=c.phone, address=c.address, notes=c.notes,
+            doc_type=c.doc_type, doc_number=c.doc_number, legal_name=c.legal_name,
+        )
         for c in customers
     ]
 
@@ -33,6 +36,7 @@ async def create_customer(
     return CustomerOut(
         id=customer.id, name=customer.name, phone=customer.phone,
         address=customer.address, notes=customer.notes,
+        doc_type=customer.doc_type, doc_number=customer.doc_number, legal_name=customer.legal_name,
     )
 
 
@@ -50,6 +54,7 @@ async def update_customer(
     return CustomerOut(
         id=customer.id, name=customer.name, phone=customer.phone,
         address=customer.address, notes=customer.notes,
+        doc_type=customer.doc_type, doc_number=customer.doc_number, legal_name=customer.legal_name,
     )
 
 

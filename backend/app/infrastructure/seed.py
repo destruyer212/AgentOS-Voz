@@ -5,6 +5,7 @@ Idempotente: inserta solo los SKUs demo que falten, sin duplicar catalogo.
 
 from sqlalchemy import select
 
+from app.domain.invoicing_models import InvoiceSeries
 from app.domain.models import Customer, InventoryItem, Product, Tenant
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal
@@ -73,12 +74,29 @@ async def seed_demo_data() -> None:
                 description="Cobro del motorizado, solo para pedidos por delivery.",
                 price=settings.delivery_fee_soles,
                 category="servicio",
+                unidad_medida="ZZ",  # servicio, no un bien -- catalogo 03 SUNAT
             )
             session.add(delivery_product)
             await session.flush()
             session.add(
                 InventoryItem(tenant_id=tenant.id, product_id=delivery_product.id, quantity=999999, reserved=0)
             )
+
+        # Series de comprobantes electronicos (ver invoicing_services.py):
+        # B001 para boletas, F001 para facturas -- las series estandar que
+        # usa cualquier negocio chico con un solo punto de emision. Si el
+        # negocio necesita mas series (varios locales, por ejemplo) se
+        # agregan despues a mano, esto solo garantiza que las dos basicas
+        # existan desde el arranque.
+        existing_series = (
+            await session.execute(select(InvoiceSeries).where(InvoiceSeries.tenant_id == tenant.id))
+        ).scalars().all()
+        existing_series_keys = {(s.document_type, s.serie) for s in existing_series}
+        for document_type, serie in (("boleta", "B001"), ("factura", "F001")):
+            if (document_type, serie) not in existing_series_keys:
+                session.add(
+                    InvoiceSeries(tenant_id=tenant.id, document_type=document_type, serie=serie, next_number=1)
+                )
 
         existing_customer = await session.scalar(
             select(Customer).where(Customer.tenant_id == tenant.id, Customer.phone == "+51999999999")

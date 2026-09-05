@@ -5,6 +5,7 @@ from app.api.v1 import (
     agent_llm_proxy,
     conversations,
     customers,
+    invoicing,
     orders,
     products,
     system,
@@ -17,6 +18,7 @@ api_router = APIRouter()
 api_router.include_router(products.router)
 api_router.include_router(customers.router)
 api_router.include_router(orders.router)
+api_router.include_router(invoicing.router)
 api_router.include_router(agent.router)
 api_router.include_router(agent_llm_proxy.router)
 api_router.include_router(conversations.router)

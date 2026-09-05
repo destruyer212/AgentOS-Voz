@@ -114,6 +114,10 @@ class ProductService:
             price=product.price,
             category=product.category,
             stock_available=max(inventory.quantity - inventory.reserved, 0),
+            unidad_medida=product.unidad_medida,
+            igv_affectation_code=product.igv_affectation_code,
+            igv_percentage=product.igv_percentage,
+            igv_tribute_name=product.igv_tribute_name,
         )
 
     async def search_scored(self, query: str, limit: int = 5) -> list[tuple[float, ProductOut]]:

@@ -10,6 +10,12 @@ class Tenant(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(160))
     industry: Mapped[str] = mapped_column(String(80), default="restaurant")
+    # --- Datos del emisor para facturación electrónica SUNAT ---
+    ruc: Mapped[str | None] = mapped_column(String(11))
+    legal_name: Mapped[str | None] = mapped_column(String(200))
+    fiscal_address: Mapped[str | None] = mapped_column(String(300))
+    apisunat_token: Mapped[str | None] = mapped_column(String(500))
+    apisunat_environment: Mapped[str | None] = mapped_column(String(20), default="sandbox")
 
 
 class Customer(Base, TenantScopedMixin, TimestampMixin):
@@ -20,6 +26,18 @@ class Customer(Base, TenantScopedMixin, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(40), index=True)
     address: Mapped[str | None] = mapped_column(String(240))
     notes: Mapped[str | None] = mapped_column(Text)
+    # --- Datos fiscales del receptor para facturacion SUNAT (catalogo 06) ---
+    # "0"=Sin documento, "1"=DNI, "4"=Carnet de extranjeria, "6"=RUC,
+    # "7"=Pasaporte, "A"=Cedula diplomatica. Sin valor (None) = todavia no se
+    # le pidio documento a este cliente (no es lo mismo que "0" explicito).
+    # NOTA: "boleta sin DNI" NO usa un doc_type especial -- API SUNAT (ver
+    # invoicing_services.py) usa doc_type="1" + doc_number="99999999" como
+    # placeholder, siguiendo la convencion real de apisunat.pe.
+    doc_type: Mapped[str | None] = mapped_column(String(4))
+    doc_number: Mapped[str | None] = mapped_column(String(20))
+    # Razon social -- solo aplica si doc_type="6" (RUC, cliente empresa que
+    # necesita factura). Para personas naturales (DNI) se usa `name`.
+    legal_name: Mapped[str | None] = mapped_column(String(200))
 
 
 class Product(Base, TenantScopedMixin, TimestampMixin):
@@ -33,6 +51,16 @@ class Product(Base, TenantScopedMixin, TimestampMixin):
     price: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(40), default="general", index=True)
     active: Mapped[bool] = mapped_column(default=True)
+    # --- Campos SUNAT para poder facturar este producto sin pedirlos cada
+    # vez (ver invoicing_services.py, que arma cada linea del comprobante
+    # leyendo esto). `sku` ya cumple el rol de "codigo_interno" del item, no
+    # se duplica. `price` se sigue guardando CON IGV incluido (precio de
+    # venta al publico, como ya lo usa el resto del sistema) -- el valor sin
+    # IGV para el comprobante se calcula a partir de `igv_percentage`.
+    unidad_medida: Mapped[str] = mapped_column(String(5), default="NIU")  # catalogo 03 SUNAT: NIU=unidad bienes, ZZ=unidad servicios
+    igv_affectation_code: Mapped[str] = mapped_column(String(2), default="10")  # catalogo 07: 10=gravado, 20=exonerado, 21=gratuito, 30=inafecto
+    igv_percentage: Mapped[float] = mapped_column(Float, default=18.0)
+    igv_tribute_name: Mapped[str] = mapped_column(String(10), default="IGV")  # IGV | EXO | GRA | INA, segun igv_affectation_code
 
 
 class InventoryItem(Base, TenantScopedMixin, TimestampMixin):

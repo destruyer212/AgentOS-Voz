@@ -11,6 +11,7 @@ from alembic import context
 # domain/models.py es el modulo que de verdad define las clases ORM
 # (db/base.py solo trae la clase Base vacia). Sin este import, autogenerate
 # ve un metadata vacio y genera migraciones que borran todo.
+from app.domain import invoicing_models as _invoicing_models  # noqa: F401
 from app.domain import models as _models  # noqa: F401
 from app.infrastructure.config import settings
 from app.infrastructure.db.base import Base
