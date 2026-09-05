@@ -46,7 +46,6 @@ _TIMEOUT_SECONDS = 15.0
 _SIN_DNI_TIPO = "1"
 _SIN_DNI_NUMERO = "99999999"
 _SIN_DNI_DENOMINACION = "CLIENTE VARIOS"
-_SIN_DNI_DIRECCION = "-"
 
 # codigo_tipo_afectacion_igv -> nombre_tributo que espera apisunat.pe (ver
 # ejemplos reales: 10->IGV, 20->EXO, 21->GRA, 30->INA).
@@ -112,13 +111,22 @@ class InvoicingService:
         override_numero: str | None,
         override_denominacion: str | None,
         override_direccion: str | None,
+        fiscal_address: str | None = None,
     ) -> tuple[str, str, str, str]:
         """Devuelve (tipo_doc, numero_doc, denominacion, direccion) listos
         para el payload. Prioridad: lo que venga explicito en el request >
         lo que ya tenga el cliente en su ficha > placeholder de "boleta sin
-        DNI" (solo valido para boleta, nunca para factura)."""
+        DNI" (solo valido para boleta, nunca para factura).
+
+        `fiscal_address` es la direccion del LOCAL (Tenant.fiscal_address,
+        ver invoicing_service.create_from_order) -- pedido explicito del
+        negocio: si no hay direccion real del cliente (recojo en el local,
+        o boleta sin ningun dato), el comprobante muestra la direccion del
+        establecimiento en vez de quedar en blanco ("SIN DIRECCIÓN
+        ESPECIFICADA" en el PDF de apisunat.pe, que se ve mal impreso)."""
         tipo = override_tipo or (customer.doc_type if customer else None)
         numero = override_numero or (customer.doc_number if customer else None)
+        default_direccion = fiscal_address or "-"
 
         if document_type == "factura":
             if tipo != "6" or not numero or not numero.isdigit() or len(numero) != 11:
@@ -131,7 +139,7 @@ class InvoicingService:
             )
             if not denominacion:
                 raise InvoicingError("Falta la razón social del cliente para la factura.")
-            direccion = override_direccion or (customer.address if customer else None) or "-"
+            direccion = override_direccion or (customer.address if customer else None) or default_direccion
             return tipo, numero, denominacion, direccion
 
         # boleta: el documento en ficha solo cuenta aca si es de PERSONA
@@ -144,14 +152,14 @@ class InvoicingService:
         if tipo == "6":
             tipo, numero = None, None
         if not tipo or not numero:
-            return _SIN_DNI_TIPO, _SIN_DNI_NUMERO, _SIN_DNI_DENOMINACION, _SIN_DNI_DIRECCION
+            return _SIN_DNI_TIPO, _SIN_DNI_NUMERO, _SIN_DNI_DENOMINACION, default_direccion
         if tipo == "1" and (not numero.isdigit() or len(numero) != 8):
             raise InvoicingError("Para emitir boleta con DNI, el DNI debe tener exactamente 8 digitos.")
 
         denominacion = override_denominacion or (customer.name if customer else None) or (
             customer.legal_name if customer else None
         ) or _SIN_DNI_DENOMINACION
-        direccion = override_direccion or (customer.address if customer else None) or _SIN_DNI_DIRECCION
+        direccion = override_direccion or (customer.address if customer else None) or default_direccion
         return tipo, numero, denominacion, direccion
 
     # ---------- Lineas de detalle ----------
@@ -231,6 +239,7 @@ class InvoicingService:
                 f"{existing.serie}-{existing.numero} ({existing.sunat_status})."
             )
 
+        tenant = await self.session.get(Tenant, self.tenant_id)
         tipo_doc, numero_doc, denominacion, direccion = self.resolve_cliente(
             payload.document_type,
             order.customer,
@@ -238,6 +247,7 @@ class InvoicingService:
             payload.cliente_numero_doc,
             payload.cliente_denominacion,
             payload.cliente_direccion,
+            fiscal_address=tenant.fiscal_address if tenant else None,
         )
 
         # porcentaje_igv del request es una eleccion a nivel de todo el

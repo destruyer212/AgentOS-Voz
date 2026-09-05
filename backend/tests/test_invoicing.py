@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.domain.invoicing_models import Invoice, InvoiceItem, InvoiceSeries
 from app.domain.invoicing_schemas import InvoiceFromOrderRequest
 from app.domain.invoicing_services import InvoicingError, InvoicingService
-from app.domain.models import InventoryItem, Product
+from app.domain.models import InventoryItem, Product, Tenant
 from app.domain.schemas import CustomerCreate, CustomerUpdate, OrderCreate, OrderItemIn
 from app.domain.services import CustomerService, OrderService
 from app.infrastructure.config import settings
@@ -72,6 +72,42 @@ async def test_boleta_without_customer_doc_uses_sin_dni_placeholder():
         # Sin apisunat_token configurado, se queda como draft -- nunca intenta red.
         assert invoice.sunat_status == "draft"
         assert "apisunat_token" in (invoice.sunat_message or "")
+
+
+@pytest.mark.asyncio
+async def test_direccion_falls_back_to_establishment_address_not_blank():
+    # Bug real, visto en vivo: sin direccion real del cliente (recojo en el
+    # local, o boleta sin ningun dato), el PDF de apisunat.pe mostraba "SIN
+    # DIRECCIÓN ESPECIFICADA" -- se ve mal impreso. Si el negocio configuro
+    # su direccion (Tenant.fiscal_address), el comprobante debe usarla en
+    # vez de dejar el campo vacio.
+    async with AsyncSessionLocal() as session:
+        tenant = await session.get(Tenant, settings.default_tenant_id)
+        tenant.fiscal_address = "Cal. Miguel Grau Nro. 435, Puente Piedra, Lima"
+        await session.commit()
+
+        order_id = await _make_order(session)
+        invoice = await InvoicingService(session, settings.default_tenant_id).create_from_order(
+            InvoiceFromOrderRequest(order_id=order_id, document_type="boleta")
+        )
+        assert invoice.cliente_direccion == "Cal. Miguel Grau Nro. 435, Puente Piedra, Lima"
+
+
+@pytest.mark.asyncio
+async def test_direccion_falls_back_to_dash_when_no_fiscal_address_configured():
+    async with AsyncSessionLocal() as session:
+        # Explicito, no asumido: otro test de este mismo archivo si configura
+        # fiscal_address en la misma DB compartida (ver conftest.py) -- este
+        # test necesita partir sin ella para probar el caso "no configurada".
+        tenant = await session.get(Tenant, settings.default_tenant_id)
+        tenant.fiscal_address = None
+        await session.commit()
+
+        order_id = await _make_order(session)
+        invoice = await InvoicingService(session, settings.default_tenant_id).create_from_order(
+            InvoiceFromOrderRequest(order_id=order_id, document_type="boleta")
+        )
+        assert invoice.cliente_direccion == "-"
 
 
 @pytest.mark.asyncio
