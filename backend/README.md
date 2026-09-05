@@ -5,6 +5,14 @@ de punta a punta: levanta con SQLite sin configurar nada y resuelve el caso
 restaurante completo (pedido en lenguaje natural -> confirmacion -> workflow
 de fulfillment -> orden creada con stock descontado).
 
+> **Esto es como se levanta en local para desarrollar.** La produccion real
+> corre en AWS (EC2 + PostgreSQL, no SQLite) atendiendo llamadas y WhatsApp
+> de verdad -- ver [../CLAUDE.md](../CLAUDE.md) para donde vive cada cosa. La
+> seccion de "Telefonia real (Twilio)" mas abajo es codigo de respaldo que
+> existe en el repo; el camino que realmente atiende llamadas en produccion
+> es Telnyx Media Streaming + Deepgram Voice Agent
+> (`app/integrations/voice_agent_bridge.py`).
+
 ## Modulos
 
 - `api`: rutas HTTP y dependencias (`v1/products`, `v1/customers`, `v1/orders`, `v1/agent`, `v1/conversations`, `v1/system`, `v1/telephony`, `v1/telephony/telnyx`).
