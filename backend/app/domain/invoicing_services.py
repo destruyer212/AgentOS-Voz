@@ -156,8 +156,15 @@ class InvoicingService:
         if tipo == "1" and (not numero.isdigit() or len(numero) != 8):
             raise InvoicingError("Para emitir boleta con DNI, el DNI debe tener exactamente 8 digitos.")
 
-        denominacion = override_denominacion or (customer.name if customer else None) or (
-            customer.legal_name if customer else None
+        # legal_name antes que name: cuando el DNI se pudo consultar en
+        # api.apiperu.pe (ver agents/runtime.py, _lookup_document_holder_name)
+        # ahi queda el nombre completo REAL segun RENIEC -- mejor que el
+        # nombre informal que el cliente dio por telefono (ej. "Dayana" vs
+        # "CASTILLO VELASQUEZ, DAYANNA ARACELI"). Si esa consulta no estaba
+        # disponible, legal_name queda None y se cae a `name` igual que
+        # antes -- mismo orden que ya usa la rama de factura mas arriba.
+        denominacion = override_denominacion or (customer.legal_name if customer else None) or (
+            customer.name if customer else None
         ) or _SIN_DNI_DENOMINACION
         direccion = override_direccion or (customer.address if customer else None) or default_direccion
         return tipo, numero, denominacion, direccion

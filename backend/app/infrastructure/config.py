@@ -108,6 +108,15 @@ class Settings(BaseSettings):
     wsp_service_url: str | None = None
     wsp_service_api_key: str | None = None
 
+    # api.apiperu.pe: consulta real de DNI/RUC (ver
+    # app/integrations/apiperu_client.py) para poner el nombre completo
+    # (RENIEC) o la razon social (SUNAT) REALES en la boleta/factura, en
+    # vez de lo que el cliente alcanza a decir por telefono. Opcional a
+    # proposito -- sin token, agents/runtime.py sigue con su fallback de
+    # siempre (el nombre que dio el cliente / "CLIENTE"), nunca bloquea
+    # una llamada real.
+    apiperu_token: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

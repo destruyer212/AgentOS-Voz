@@ -13,6 +13,7 @@ from app.domain.services import DomainError, OrderService
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal, init_db
 from app.infrastructure.seed import seed_demo_data
+from app.integrations import apiperu_client
 
 
 @pytest.fixture(autouse=True)
@@ -1864,6 +1865,98 @@ async def test_phone_call_can_give_document_type_and_dni_in_one_breath():
             assert turn.status == "awaiting_confirmation"
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.boleta_dni == "45678912"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_dni_uses_apiperu_full_name_when_available(monkeypatch):
+    # Ver app/integrations/apiperu_client.py: cuando la consulta a
+    # api.apiperu.pe funciona, el nombre completo REAL (RENIEC) queda como
+    # legal_name del cliente -- sin importar que nombre haya dado por
+    # telefono, la boleta debe usar el dato oficial (ver tambien
+    # resolve_cliente en invoicing_services.py, que ahora prioriza
+    # legal_name sobre el nombre informal para boleta).
+    async def fake_lookup_dni(dni):
+        assert dni == "45678912"
+        return "DAYANNA ARACELI CASTILLO VELASQUEZ"
+
+    monkeypatch.setattr(apiperu_client, "lookup_dni", fake_lookup_dni)
+
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Dayana", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            await runtime.handle_turn(
+                AgentMessageIn(message="boleta, 45678912", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.customer["legal_name"] == "DAYANNA ARACELI CASTILLO VELASQUEZ"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_ruc_uses_apiperu_razon_social_when_available(monkeypatch):
+    async def fake_lookup_ruc(ruc):
+        assert ruc == "20563398761"
+        return "EL OLIVAR GRILL E.I.R.L."
+
+    monkeypatch.setattr(apiperu_client, "lookup_ruc", fake_lookup_ruc)
+
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="factura, mi ruc es 20563398761", conversation_id=conversation_id, channel="phone"
+                )
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_razon_social == "EL OLIVAR GRILL E.I.R.L."
+            assert state.customer["legal_name"] == "EL OLIVAR GRILL E.I.R.L."
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_ruc_falls_back_to_spoken_guess_when_apiperu_unavailable(monkeypatch):
+    # Sin token configurado (o con la API caida), apiperu_client.lookup_ruc
+    # ya devuelve None por su cuenta -- este test confirma que el flujo
+    # entero sigue funcionando con el fallback de siempre (nombre que ya
+    # dio el cliente) en vez de trabarse o dejar la factura sin razon
+    # social.
+    async def fake_lookup_ruc(ruc):
+        return None
+
+    monkeypatch.setattr(apiperu_client, "lookup_ruc", fake_lookup_ruc)
+
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="factura, mi ruc es 20563398761", conversation_id=conversation_id, channel="phone"
+                )
+            )
+            assert turn.status == "awaiting_confirmation"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.factura_razon_social == "Carlos"
     finally:
         reset(conversation_id)
 

@@ -42,6 +42,7 @@ from app.domain.text_utils import (
 )
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal
+from app.integrations import apiperu_client
 from app.integrations.wsp_notifications import fire_and_forget, notify_order_confirmed
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
@@ -162,6 +163,17 @@ def _extract_id_number(raw_value: str, expected_length: int) -> str | None:
     if len(spoken) == expected_length:
         return spoken
     return None
+
+
+async def _lookup_document_holder_name(doc_type: str, numero: str, fallback: str) -> str:
+    """DNI (doc_type "1") -> nombre completo real (RENIEC); RUC (doc_type
+    "6") -> razon social real (SUNAT) -- via api.apiperu.pe (ver
+    app/integrations/apiperu_client.py). Si la consulta no esta configurada
+    o falla, se usa `fallback` (lo que ya se hacia antes de este lookup)
+    para nunca bloquear ni romper el turno por un problema de esa API."""
+    lookup = apiperu_client.lookup_dni if doc_type == "1" else apiperu_client.lookup_ruc
+    resolved = await lookup(numero)
+    return resolved or fallback
 
 # Categorias del menu y palabras que el cliente usa para referirse a ellas,
 # para responder preguntas tipo "¿hay algo para tomar?" con las opciones
@@ -1472,28 +1484,31 @@ class AgentRuntime:
                     state.boleta_dni = dni
                     state.pending_dni_rejection_message = None
                     if state.customer:
+                        legal_name = await _lookup_document_holder_name("1", dni, "") or None
                         state.customer["doc_type"] = "1"
                         state.customer["doc_number"] = state.boleta_dni
-                        state.customer["legal_name"] = None
+                        state.customer["legal_name"] = legal_name
                         if state.customer.get("id"):
                             await CustomerService(self.session, self.tenant_id).update_tax_info(
-                                state.customer["id"], "1", state.boleta_dni, None
+                                state.customer["id"], "1", state.boleta_dni, legal_name
                             )
                             await self.session.commit()
             else:
                 state.boleta_dni = None
                 ruc = _extract_id_number(raw_value, 11)
                 if ruc:
+                    fallback_name = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+                    razon_social = await _lookup_document_holder_name("6", ruc, fallback_name)
                     state.factura_ruc = ruc
-                    state.factura_razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+                    state.factura_razon_social = razon_social
                     state.pending_ruc_rejection_message = None
                     if state.customer:
                         state.customer["doc_type"] = "6"
                         state.customer["doc_number"] = state.factura_ruc
-                        state.customer["legal_name"] = state.factura_razon_social
+                        state.customer["legal_name"] = razon_social
                         if state.customer.get("id"):
                             await CustomerService(self.session, self.tenant_id).update_tax_info(
-                                state.customer["id"], "6", state.factura_ruc, state.factura_razon_social
+                                state.customer["id"], "6", state.factura_ruc, razon_social
                             )
                             await self.session.commit()
             return
@@ -1510,12 +1525,13 @@ class AgentRuntime:
             state.boleta_dni = dni
             state.pending_dni_rejection_message = None
             if state.customer:
+                legal_name = await _lookup_document_holder_name("1", dni, "") or None
                 state.customer["doc_type"] = "1"
                 state.customer["doc_number"] = dni
-                state.customer["legal_name"] = None
+                state.customer["legal_name"] = legal_name
                 if state.customer.get("id"):
                     await CustomerService(self.session, self.tenant_id).update_tax_info(
-                        state.customer["id"], "1", dni, None
+                        state.customer["id"], "1", dni, legal_name
                     )
                     await self.session.commit()
             return
@@ -1540,22 +1556,21 @@ class AgentRuntime:
                     "No reconocí un RUC válido. Para factura son exactamente 11 dígitos. ¿Me lo repites, o prefieres boleta?"
                 )
                 return
-            # La razon social es lo que sobra del mensaje despues de sacar
-            # el RUC y palabras de relleno tipicas ("es", "el ruc es", etc).
-            # Conservador a proposito: si no queda nada util (o si el RUC se
-            # reconocio a partir de numeros hablados, donde no hay un
-            # substring literal que restar sin dejar basura), se usa el
-            # nombre que ya dio el cliente en vez de inventar una razon
-            # social vacia (factura sin razon social no es valida).
-            razon_social = ""
+            # La razon social REAL viene de api.apiperu.pe (ver
+            # _lookup_document_holder_name / apiperu_client.py) -- el
+            # fallback de abajo (lo que sobra del mensaje despues de sacar
+            # el RUC y palabras de relleno tipicas, o el nombre que ya dio
+            # el cliente) solo se usa si esa consulta no esta configurada o
+            # falla, para nunca dejar una factura sin razon social.
+            spoken_guess = ""
             if _RUC_RE.search(raw_value):
-                razon_social = _RUC_RE.sub("", raw_value)
-                razon_social = re.sub(
-                    r"\b(el\s+ruc\s+es|ruc|es|y|razon\s+social|la\s+razon\s+social\s+es)\b", "", razon_social,
+                spoken_guess = _RUC_RE.sub("", raw_value)
+                spoken_guess = re.sub(
+                    r"\b(el\s+ruc\s+es|ruc|es|y|razon\s+social|la\s+razon\s+social\s+es)\b", "", spoken_guess,
                     flags=re.IGNORECASE,
                 ).strip(" ,.-")
-            if not razon_social:
-                razon_social = (state.customer.get("name") if state.customer else None) or "CLIENTE"
+            fallback_name = spoken_guess or (state.customer.get("name") if state.customer else None) or "CLIENTE"
+            razon_social = await _lookup_document_holder_name("6", ruc, fallback_name)
             state.invoice_document_type = "factura"
             state.factura_ruc = ruc
             state.factura_razon_social = razon_social
