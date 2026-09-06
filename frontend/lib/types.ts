@@ -195,3 +195,141 @@ export interface WorkflowStepTrace {
   arguments?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
 }
+
+// Contabilidad (panel /contabilidad, ver backend/app/domain/analytics_services.py).
+// El backend devuelve dict a mano (mismo patron que voice-metrics/audit-logs
+// en system.py) en vez de un schema Pydantic formal -- estos tipos espejan
+// esos dicts campo por campo.
+export type AnalyticsRange = "today" | "7d" | "30d" | "90d" | "all";
+
+export interface RevenueByDay {
+  date: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface RevenueByKey {
+  key: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface AnalyticsSummary {
+  range: AnalyticsRange;
+  orders_count: number;
+  revenue_total: number;
+  average_ticket: number;
+  cancelled_count: number;
+  cancelled_rate: number;
+  revenue_by_day: RevenueByDay[];
+  revenue_by_fulfillment: RevenueByKey[];
+  revenue_by_payment_method: RevenueByKey[];
+}
+
+export interface TopProductRow {
+  product_id: number;
+  name: string;
+  category: string;
+  quantity: number;
+  revenue: number;
+  orders_count: number;
+}
+
+export interface ProductsByCategory {
+  category: string;
+  revenue: number;
+  quantity: number;
+}
+
+export interface TopProductsReport {
+  range: AnalyticsRange;
+  orders_with_items: number;
+  by_quantity: TopProductRow[];
+  by_revenue: TopProductRow[];
+  by_category: ProductsByCategory[];
+}
+
+export interface TopCustomerRow {
+  customer_id: number;
+  name: string;
+  phone: string | null;
+  revenue: number;
+  orders_count: number;
+  average_ticket: number;
+  last_order_at: string;
+}
+
+export interface TopCustomersReport {
+  range: AnalyticsRange;
+  registered_customers: number;
+  by_spend: TopCustomerRow[];
+  by_frequency: TopCustomerRow[];
+  anonymous_orders: number;
+  anonymous_revenue: number;
+}
+
+export interface SalesByChannelReport {
+  range: AnalyticsRange;
+  by_channel: RevenueByKey[];
+}
+
+export interface WeekdayBucket {
+  weekday: number;
+  label: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface HourBucket {
+  hour: number;
+  label: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface SalesByTimeReport {
+  range: AnalyticsRange;
+  by_weekday: WeekdayBucket[];
+  by_hour: HourBucket[];
+  peak_weekday: WeekdayBucket | null;
+  peak_hour: HourBucket | null;
+}
+
+export interface InvoiceStatusRow {
+  status: string;
+  count: number;
+  total: number;
+}
+
+export interface InvoiceTypeRow {
+  document_type: string;
+  count: number;
+  total: number;
+}
+
+export interface RecentInvoiceRow {
+  id: number;
+  order_id: number | null;
+  document_type: InvoiceDocumentType;
+  serie_numero: string;
+  fecha_emision: string;
+  cliente_tipo_doc: string;
+  cliente_numero_doc: string | null;
+  cliente_denominacion: string;
+  total: number;
+  total_igv: number | null;
+  sunat_status: SunatStatus;
+  sunat_message: string | null;
+  pdf_a4_url: string | null;
+  pdf_ticket_url: string | null;
+}
+
+export interface InvoicesSummaryReport {
+  range: AnalyticsRange;
+  invoices_count: number;
+  total_facturado_aceptado: number;
+  total_igv_aceptado: number;
+  by_status: InvoiceStatusRow[];
+  by_document_type: InvoiceTypeRow[];
+  recent_invoices: RecentInvoiceRow[];
+}

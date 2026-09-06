@@ -3,6 +3,8 @@ import "server-only";
 import type {
   AgentMessageIn,
   AgentTurnOut,
+  AnalyticsRange,
+  AnalyticsSummary,
   AuditLogEntry,
   ConversationDetailOut,
   ConversationOut,
@@ -10,8 +12,13 @@ import type {
   CustomerOut,
   CustomerUpdateIn,
   BusinessInfoOut,
+  InvoicesSummaryReport,
   OrderOut,
   ProductOut,
+  SalesByChannelReport,
+  SalesByTimeReport,
+  TopCustomersReport,
+  TopProductsReport,
   WorkflowRunEntry,
 } from "./types";
 
@@ -94,5 +101,17 @@ export const api = {
     auditLogs: (limit = 50) => request<AuditLogEntry[]>(`/system/audit-logs${qs({ limit })}`),
     workflowRuns: (limit = 20) => request<WorkflowRunEntry[]>(`/system/workflow-runs${qs({ limit })}`),
     businessInfo: () => request<BusinessInfoOut>("/system/business-info"),
+  },
+  analytics: {
+    summary: (range: AnalyticsRange) => request<AnalyticsSummary>(`/analytics/summary${qs({ range })}`),
+    topProducts: (range: AnalyticsRange, limit = 10) =>
+      request<TopProductsReport>(`/analytics/top-products${qs({ range, limit })}`),
+    topCustomers: (range: AnalyticsRange, limit = 10) =>
+      request<TopCustomersReport>(`/analytics/top-customers${qs({ range, limit })}`),
+    salesByChannel: (range: AnalyticsRange) =>
+      request<SalesByChannelReport>(`/analytics/sales-by-channel${qs({ range })}`),
+    salesByTime: (range: AnalyticsRange) => request<SalesByTimeReport>(`/analytics/sales-by-time${qs({ range })}`),
+    invoices: (range: AnalyticsRange, listLimit = 200) =>
+      request<InvoicesSummaryReport>(`/analytics/invoices${qs({ range, list_limit: listLimit })}`),
   },
 };

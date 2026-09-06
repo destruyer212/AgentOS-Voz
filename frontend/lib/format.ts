@@ -69,6 +69,7 @@ export const PAYMENT_METHOD_LABEL: Record<string, string> = {
   yape: "Yape",
   plin: "Plin",
   tarjeta: "Tarjeta",
+  sin_especificar: "Sin especificar",
 };
 
 export function paymentMethodLabel(method: string): string {
@@ -78,10 +79,29 @@ export function paymentMethodLabel(method: string): string {
 export const FULFILLMENT_LABEL: Record<string, string> = {
   delivery: "Delivery",
   pickup: "Recojo en local",
+  sin_especificar: "Sin especificar",
 };
 
 export function fulfillmentLabel(type: string): string {
   return FULFILLMENT_LABEL[type] ?? type;
+}
+
+// Canal por el que entro el pedido (ver analytics_services.py,
+// sales_by_channel -- cruza Order.conversation_id con Conversation.channel;
+// "manual" es un pedido sin conversacion, ej. armado a mano desde el panel).
+export const CHANNEL_LABEL: Record<string, string> = {
+  phone: "Llamada telefónica",
+  web: "Chat web",
+  whatsapp: "WhatsApp",
+  manual: "Manual (sin conversación)",
+};
+
+export function channelLabel(channel: string): string {
+  return CHANNEL_LABEL[channel] ?? channel;
+}
+
+export function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 // Comprobante electronico (ver backend/app/domain/invoicing_services.py) y
