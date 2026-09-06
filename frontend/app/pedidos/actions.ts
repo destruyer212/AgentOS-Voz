@@ -23,7 +23,13 @@ export async function updateOrderStatusAction(
     return { error: message };
   }
 
+  // Un mismo pedido puede cambiar de estado desde 3 pantallas distintas
+  // (admin en /pedidos, cocina, recepcion) -- revalidar las 3 asi la que
+  // no disparo la accion tambien se refresca al toque, sin esperar al
+  // siguiente tick de LiveRefresher.
   revalidatePath("/pedidos");
+  revalidatePath("/cocina");
+  revalidatePath("/recepcion");
   revalidatePath("/");
   return { success: true };
 }

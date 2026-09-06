@@ -1,73 +1,13 @@
 "use client";
 
-import {
-  Bike,
-  CheckCircle2,
-  ChefHat,
-  ChevronDown,
-  ClipboardList,
-  PackageCheck,
-  PhoneCall,
-  Store,
-  Wallet,
-  XCircle,
-} from "lucide-react";
+import { Bike, ChevronDown, ClipboardList, PhoneCall, Store, Wallet } from "lucide-react";
 import Link from "next/link";
-import type { ComponentType } from "react";
-import { Fragment, useActionState, useState } from "react";
-import { updateOrderStatusAction, type UpdateOrderStatusState } from "@/app/pedidos/actions";
+import { Fragment, useState } from "react";
 import { OrderStatusBadge } from "@/components/Badge";
 import { EmptyState } from "@/components/EmptyState";
 import { formatCurrency, fulfillmentLabel, paymentMethodLabel } from "@/lib/format";
-import type { OrderOut, OrderStatus } from "@/lib/types";
-
-// Un solo "siguiente paso" por estado (nunca un desplegable libre): asi
-// cocina/mostrador no pueden saltarse pasos por accidente -- el backend
-// tambien lo valida (ver _ORDER_STATUS_TRANSITIONS en services.py), esto
-// solo evita mostrar botones que igual el servidor rechazaria. "dispatched"
-// (sale con el motorizado) dispara el aviso de WhatsApp "ya salió, ~30
-// min"; "ready" en recojo dispara el aviso de "ya está listo".
-const TERMINAL_STATUSES: OrderStatus[] = ["delivered", "cancelled", "failed"];
-
-interface NextAction {
-  status: OrderStatus;
-  label: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-  tone: "primary" | "danger";
-}
-
-function getNextActions(order: OrderOut): NextAction[] {
-  const cancel: NextAction = { status: "cancelled", label: "Cancelar pedido", icon: XCircle, tone: "danger" };
-  const isDelivery = order.fulfillment_type === "delivery";
-
-  switch (order.status as OrderStatus) {
-    case "draft":
-    case "pending_confirmation":
-      return [{ status: "confirmed", label: "Confirmar pedido", icon: CheckCircle2, tone: "primary" }, cancel];
-    case "confirmed":
-    case "scheduled":
-      return [{ status: "preparing", label: "Aceptar en cocina", icon: ChefHat, tone: "primary" }, cancel];
-    case "preparing":
-      return isDelivery
-        ? [
-            { status: "dispatched", label: "Salió con el motorizado", icon: Bike, tone: "primary" },
-            cancel,
-          ]
-        : [
-            { status: "ready", label: "Marcar listo para recoger", icon: PackageCheck, tone: "primary" },
-            cancel,
-          ];
-    case "ready":
-      return [
-        { status: "delivered", label: "Cliente recogió su pedido", icon: CheckCircle2, tone: "primary" },
-        cancel,
-      ];
-    case "dispatched":
-      return [{ status: "delivered", label: "Motorizado entregó el pedido", icon: CheckCircle2, tone: "primary" }];
-    default:
-      return [];
-  }
-}
+import type { OrderOut } from "@/lib/types";
+import { OrderStatusForm } from "./OrderStatusForm";
 
 export function OrdersTable({ orders }: { orders: OrderOut[] }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -214,51 +154,3 @@ function OrderDetail({ order }: { order: OrderOut }) {
   );
 }
 
-const initialState: UpdateOrderStatusState = {};
-
-function OrderStatusForm({ order }: { order: OrderOut }) {
-  const actions = getNextActions(order);
-
-  if (TERMINAL_STATUSES.includes(order.status as OrderStatus)) {
-    return <p className="text-xs text-slate-500">Este pedido ya está cerrado, no admite más cambios.</p>;
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {actions.map((action) => (
-        <OrderStatusButton key={action.status} order={order} action={action} />
-      ))}
-    </div>
-  );
-}
-
-// Bug real, visto en vivo: con varios botones "submit" (nombre/valor
-// distinto cada uno) dentro de UN SOLO <form>, el estado que React arma al
-// llamar a la Server Action no siempre incluye cual boton disparo el
-// envio -- "status" llegaba vacio y el servidor respondia "Datos
-// inválidos." sin importar cual boton se apretara. Cada boton con su
-// propio <form> (y su propio useActionState) elimina esa ambiguedad por
-// completo: el valor de "status" queda fijo en un input oculto, no
-// depende de cual boton disparo el submit.
-function OrderStatusButton({ order, action }: { order: OrderOut; action: NextAction }) {
-  const [state, formAction, isPending] = useActionState(updateOrderStatusAction, initialState);
-  const Icon = action.icon;
-
-  return (
-    <form action={formAction}>
-      <input type="hidden" name="id" value={order.id} />
-      <input type="hidden" name="status" value={action.status} />
-      <button
-        type="submit"
-        disabled={isPending}
-        className={
-          action.tone === "danger" ? "btn-secondary w-full text-accent-rose" : "btn-primary w-full"
-        }
-      >
-        <Icon size={14} />
-        {isPending ? "Actualizando…" : action.label}
-      </button>
-      {state.error && <p className="mt-1 text-xs text-accent-rose">{state.error}</p>}
-    </form>
-  );
-}

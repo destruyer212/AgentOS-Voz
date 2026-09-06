@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Bot,
+  ChefHat,
   ClipboardList,
+  ConciergeBell,
   LayoutDashboard,
   Phone,
   SignalHigh,
@@ -27,6 +29,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/agente", label: "Agente", icon: Bot },
   { href: "/llamadas", label: "Llamadas", icon: Phone },
   { href: "/pedidos", label: "Pedidos", icon: ClipboardList },
+  { href: "/cocina", label: "Cocina", icon: ChefHat },
+  { href: "/recepcion", label: "Recepción", icon: ConciergeBell },
   { href: "/productos", label: "Productos", icon: UtensilsCrossed },
   { href: "/clientes", label: "Clientes", icon: Users },
   { href: "/negocio", label: "Negocio", icon: Store },
