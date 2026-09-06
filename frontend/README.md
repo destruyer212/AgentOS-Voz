@@ -42,6 +42,12 @@ lib/            cliente API, tipos y formateo (moneda, fechas, labels)
 | `/productos` | Catalogo con stock, con busqueda difusa (la misma que usa el agente) |
 | `/clientes` | Lista + alta manual de clientes |
 | `/auditoria` | Audit log completo + trazas de ejecucion del workflow engine |
+| `/contabilidad` | Resumen de ingresos: total, tendencia diaria, por entrega y metodo de pago (solo admin) |
+| `/contabilidad/productos` | Platos mas pedidos por cantidad e ingreso, y por categoria (solo admin) |
+| `/contabilidad/clientes` | Mejores clientes por gasto y por frecuencia (solo admin) |
+| `/contabilidad/canales` | Ingresos por llamada telefonica vs chat web vs WhatsApp (solo admin) |
+| `/contabilidad/horarios` | Dia de la semana y hora pico de ventas (solo admin) |
+| `/contabilidad/comprobantes` | Boletas/facturas SUNAT emitidas, IGV recaudado, y el PDF de cada una (solo admin) |
 
 ## Login
 
