@@ -335,7 +335,20 @@ def _parse_items(text: str) -> list[ParsedItem]:
     # la cantidad no quede pegada a palabras como "quiero"/"hola".
     lead_match = re.search(rf"\b{QTY_PATTERN}\b", text, re.IGNORECASE)
     prefix_before_qty = normalize_text(text[: lead_match.start()]) if lead_match else ""
-    if lead_match and not any(normalize_text(prefix).strip() in prefix_before_qty for prefix in _EDIT_PREFIXES):
+    # Bug real, visto en vivo: el menu tiene productos cuyo nombre TERMINA
+    # en un numero-palabra ("Pollo a la Brasa para Dos", "Parrilla para
+    # Dos") -- ahi el primer (y unico) match de QTY_PATTERN es esa palabra
+    # final, y el codigo de abajo descartaba TODO el nombre del producto
+    # como si fuera relleno antes de una cantidad, dejando solo "dos"
+    # suelto (que termina sin nada que pedir y se pierde el pedido entero).
+    # Una cantidad real de verdad SIEMPRE tiene el producto DESPUES ("dos
+    # hamburguesas"), nunca es la ultima palabra del mensaje -- si no
+    # queda nada de contenido real despues del match, no es una cantidad
+    # inicial, es parte del nombre de un producto.
+    has_content_after_match = bool(lead_match and tokenize(text[lead_match.end():]))
+    if lead_match and has_content_after_match and not any(
+        normalize_text(prefix).strip() in prefix_before_qty for prefix in _EDIT_PREFIXES
+    ):
         text = text[lead_match.start():]
 
     items: list[ParsedItem] = []

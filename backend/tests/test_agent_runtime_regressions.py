@@ -1987,3 +1987,64 @@ async def test_ruc_recognized_from_spoken_numbers():
             assert state.factura_ruc == "20601234567"
     finally:
         reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_product_name_ending_in_a_number_word_is_not_swallowed_as_a_bare_quantity():
+    # Bug real, visto en vivo: el menu real tiene productos cuyo nombre
+    # TERMINA en un numero-palabra ("Pollo a la Brasa para Dos", "Parrilla
+    # para Dos"). _parse_items buscaba la primera cantidad-palabra en TODO
+    # el mensaje y descartaba lo de antes como "relleno" (pensado para
+    # "Hola, quiero dos hamburguesas" -> "dos hamburguesas") -- pero aca esa
+    # cantidad era la ULTIMA palabra del nombre del producto, asi que
+    # descartaba el nombre COMPLETO y se quedaba con "dos" suelto, sin nada
+    # que pedir. El cliente repitio la misma frase 4 veces en la llamada
+    # real sin que nunca se entendiera.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        product = Product(
+            tenant_id=settings.default_tenant_id,
+            sku="TEST-POLLO-QA6-DOS",
+            name="Pollo a la Brasa QA6 para Dos",
+            price=44.0,
+            category="pollo_brasa",
+        )
+        session.add(product)
+        await session.flush()
+        session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Pollo a la brasa QA6 para dos.", conversation_id=conversation_id, channel="web"
+                )
+            )
+            assert turn.intent == "order.create"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["Pollo a la Brasa QA6 para Dos"]
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_leading_quantity_before_a_product_still_works_after_the_para_dos_fix():
+    # No-regresion: el caso comun ("dos hamburguesas", cantidad real al
+    # inicio con el producto DESPUES) tiene que seguir funcionando igual
+    # que antes del fix de arriba.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero dos hamburguesas clasicas.", conversation_id=conversation_id)
+            )
+            assert turn.intent == "order.create"
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert len(state.items) == 1
+            assert state.items[0].quantity == 2
+            assert state.items[0].name == "Hamburguesa Clasica"
+    finally:
+        reset(conversation_id)
