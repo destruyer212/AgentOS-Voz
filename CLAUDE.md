@@ -66,18 +66,27 @@ restaurante El Olivar Grill (Puente Piedra, Lima, Peru).
   `AgentRuntime` (`/api/v1/agent/turn`, `channel: "whatsapp"`) para que el
   cliente pueda pedir por WhatsApp igual que por llamada.
 
-## Frontend: esto SI hay que confirmarlo, no asumir
+## Frontend: en Vercel, con login (confirmado sept 2026)
 
-A la fecha de este archivo, en el EC2 del backend **no** hay nada de
-Next.js corriendo (sin `node_modules`, sin build `.next`) — el frontend NO
-esta desplegado ahi. No hay Vercel ni otro hosting confirmado en el repo.
-Probablemente el usuario lo corre local (`npm run dev` en `frontend/`,
-apuntando a `api.athenaai.net.pe`). **No asumas que esta en la nube: pregunta
-o verifica antes de dar por hecho donde vive.**
+- Confirmado por el usuario (screenshot en vivo): el frontend esta
+  desplegado en **Vercel**, `https://agent-os-voz.vercel.app`, plan
+  Hobby/gratis. NO esta en el EC2 del backend (ahi sigue sin `node_modules`
+  ni build `.next`) — son dos hostings totalmente separados. El deploy es
+  automatico: push a `main` en GitHub → Vercel rebuildea solo (no hay un
+  paso manual como el del backend).
+- Todo el panel esta detras de un **login** (`frontend/middleware.ts`,
+  `frontend/lib/auth.ts`) con 3 roles fijos y sin tabla de usuarios:
+  **admin** (ve y puede todo, incluidas `/cocina` y `/recepcion`),
+  **cocina** (solo `/cocina`) y **recepcion** (solo `/recepcion`).
+  Usuario/contraseña salen de variables de entorno
+  (`AUTH_ADMIN_USER`/`AUTH_ADMIN_PASS`, etc. + `AUTH_SECRET` para firmar la
+  cookie de sesion) configuradas en Vercel — sin ellas, corre con defaults
+  de desarrollo (ver `frontend/.env.local.example`), **inseguros para
+  produccion real** si nadie los pisa.
 
 ## Resumen de una linea para no volver a confundirse
 
 Backend + base de datos: **en la nube, en AWS, en produccion, atendiendo
-pedidos reales** (Postgres real, no SQLite). Frontend: estado de despliegue
-sin confirmar, probablemente local. WhatsApp: proyecto aparte, ya integrado
-por HTTP.
+pedidos reales** (Postgres real, no SQLite). Frontend: **en Vercel**
+(`agent-os-voz.vercel.app`), con login de 3 roles. WhatsApp: proyecto
+aparte, ya integrado por HTTP.

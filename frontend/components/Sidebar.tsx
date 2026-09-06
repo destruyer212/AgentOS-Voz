@@ -8,6 +8,7 @@ import {
   ClipboardList,
   ConciergeBell,
   LayoutDashboard,
+  LogOut,
   Phone,
   SignalHigh,
   ScrollText,
@@ -16,6 +17,8 @@ import {
   Users,
 } from "lucide-react";
 import type { ComponentType } from "react";
+import { logoutAction } from "@/app/login/actions";
+import { ROLE_LABEL, type Role } from "@/lib/auth-shared";
 import { useActiveCalls } from "./ActiveCallsProvider";
 
 interface NavItem {
@@ -24,7 +27,7 @@ interface NavItem {
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/agente", label: "Agente", icon: Bot },
   { href: "/llamadas", label: "Llamadas", icon: Phone },
@@ -37,10 +40,20 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/auditoria", label: "Auditoría", icon: ScrollText },
 ];
 
-export function Sidebar() {
+// El admin ve todo (incluidas Cocina y Recepcion); cocina y recepcion solo
+// tienen su propia pantalla en el menu -- el middleware ya les bloquea el
+// resto (ver middleware.ts, lib/auth.ts), pero mostrarles links que igual
+// no pueden abrir solo confunde.
+function visibleNavItems(role: Role): NavItem[] {
+  if (role === "admin") return ALL_NAV_ITEMS;
+  return ALL_NAV_ITEMS.filter((item) => item.href === `/${role}`);
+}
+
+export function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
   const { activeCalls } = useActiveCalls();
   const liveCount = activeCalls.length;
+  const navItems = visibleNavItems(role);
 
   return (
     <aside className="relative z-20 flex h-full w-64 shrink-0 flex-col border-r border-hud-500/20 bg-surface-950/85 backdrop-blur-xl">
@@ -58,7 +71,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           const Icon = item.icon;
           return (
@@ -103,10 +116,19 @@ export function Sidebar() {
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-teal opacity-75" />
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent-teal" />
           </span>
-          <div className="min-w-0 leading-tight">
+          <div className="min-w-0 flex-1 leading-tight">
             <p className="truncate text-xs font-medium text-slate-300">El Olivar Grill</p>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">Puente Piedra</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">{ROLE_LABEL[role]}</p>
           </div>
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              title="Cerrar sesión"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-surface-700 hover:text-accent-rose"
+            >
+              <LogOut size={14} />
+            </button>
+          </form>
         </div>
       </div>
     </aside>

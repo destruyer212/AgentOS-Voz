@@ -36,10 +36,31 @@ lib/            cliente API, tipos y formateo (moneda, fechas, labels)
 | `/` | Dashboard: KPIs, pedidos recientes, actividad reciente |
 | `/agente` | Chat en vivo contra `/api/v1/agent/turn` para probar el runtime sin llamar por telefono |
 | `/llamadas` | Conversaciones y llamadas en vivo, con transcript y detalle del pedido asociado |
-| `/pedidos` | Lista de pedidos con items, estado y total |
+| `/pedidos` | Lista de pedidos con items, estado y total (vista admin, ve y puede todo) |
+| `/cocina` | Tablero de pedidos por cocinar (rol cocina) |
+| `/recepcion` | Tablero de pedidos por confirmar/entregar (rol recepcion) |
 | `/productos` | Catalogo con stock, con busqueda difusa (la misma que usa el agente) |
 | `/clientes` | Lista + alta manual de clientes |
 | `/auditoria` | Audit log completo + trazas de ejecucion del workflow engine |
+
+## Login
+
+Todo el panel esta detras de un login (`middleware.ts`) con 3 roles fijos,
+sin tabla de usuarios en la base de datos -- ver `lib/auth.ts` y
+`lib/auth-shared.ts`:
+
+- **admin**: entra a todo, incluidas `/cocina` y `/recepcion`.
+- **cocina**: solo puede entrar a `/cocina`.
+- **recepcion**: solo puede entrar a `/recepcion`.
+
+Usuario/contraseña se configuran por variable de entorno
+(`AUTH_ADMIN_USER`/`AUTH_ADMIN_PASS`, `AUTH_COCINA_USER`/`AUTH_COCINA_PASS`,
+`AUTH_RECEPCION_USER`/`AUTH_RECEPCION_PASS`, mas `AUTH_SECRET` para firmar
+la cookie de sesion) -- ver `.env.local.example`. Sin esas variables, se
+usan defaults de desarrollo local (no usar en produccion). `lib/auth.ts`
+tiene `import "server-only"`: si algo lo importa desde un client component
+por error, el build falla en vez de terminar filtrando las contraseñas al
+navegador.
 
 ## Levantarlo
 
