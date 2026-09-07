@@ -1891,11 +1891,15 @@ async def test_phone_call_dni_uses_apiperu_full_name_when_available(monkeypatch)
                 await runtime.handle_turn(
                     AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
                 )
-            await runtime.handle_turn(
+            turn = await runtime.handle_turn(
                 AgentMessageIn(message="boleta, 45678912", conversation_id=conversation_id, channel="phone")
             )
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.customer["legal_name"] == "DAYANNA ARACELI CASTILLO VELASQUEZ"
+            assert state.boleta_dni_name == "DAYANNA ARACELI CASTILLO VELASQUEZ"
+            # Pedido explicito: cuando confirma el DNI de vuelta, tiene que
+            # decir el nombre real que trajo apiperu.pe, no solo el numero.
+            assert "DAYANNA ARACELI CASTILLO VELASQUEZ" in turn.response
     finally:
         reset(conversation_id)
 
@@ -1925,6 +1929,10 @@ async def test_phone_call_ruc_uses_apiperu_razon_social_when_available(monkeypat
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.factura_razon_social == "EL OLIVAR GRILL E.I.R.L."
             assert state.customer["legal_name"] == "EL OLIVAR GRILL E.I.R.L."
+            # Pedido explicito: cuando confirma el RUC de vuelta, tiene que
+            # decir la razon social real que trajo apiperu.pe, no solo el
+            # numero de RUC.
+            assert "EL OLIVAR GRILL E.I.R.L." in turn.response
     finally:
         reset(conversation_id)
 

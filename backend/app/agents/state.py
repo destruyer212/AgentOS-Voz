@@ -86,6 +86,11 @@ class ConversationState:
     # cliente pida factura.
     invoice_document_type: str | None = None  # boleta | factura
     boleta_dni: str | None = None
+    # Nombre completo real (RENIEC), via api.apiperu.pe -- ver
+    # agents/runtime.py, _lookup_document_holder_name. None si esa consulta
+    # no esta configurada o fallo; en ese caso el resumen hablado solo dice
+    # el DNI, sin nombre.
+    boleta_dni_name: str | None = None
     wants_factura: bool = False
     factura_ruc: str | None = None
     factura_razon_social: str | None = None

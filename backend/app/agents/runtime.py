@@ -514,6 +514,7 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.pending_address_awaiting_district = None
     state.invoice_document_type = None
     state.boleta_dni = None
+    state.boleta_dni_name = None
     state.wants_factura = False
     state.factura_ruc = None
     state.factura_razon_social = None
@@ -1483,8 +1484,9 @@ class AgentRuntime:
                 if dni:
                     state.boleta_dni = dni
                     state.pending_dni_rejection_message = None
+                    legal_name = await _lookup_document_holder_name("1", dni, "") or None
+                    state.boleta_dni_name = legal_name
                     if state.customer:
-                        legal_name = await _lookup_document_holder_name("1", dni, "") or None
                         state.customer["doc_type"] = "1"
                         state.customer["doc_number"] = state.boleta_dni
                         state.customer["legal_name"] = legal_name
@@ -1495,6 +1497,7 @@ class AgentRuntime:
                             await self.session.commit()
             else:
                 state.boleta_dni = None
+                state.boleta_dni_name = None
                 ruc = _extract_id_number(raw_value, 11)
                 if ruc:
                     fallback_name = (state.customer.get("name") if state.customer else None) or "CLIENTE"
@@ -1524,8 +1527,9 @@ class AgentRuntime:
             state.wants_factura = False
             state.boleta_dni = dni
             state.pending_dni_rejection_message = None
+            legal_name = await _lookup_document_holder_name("1", dni, "") or None
+            state.boleta_dni_name = legal_name
             if state.customer:
-                legal_name = await _lookup_document_holder_name("1", dni, "") or None
                 state.customer["doc_type"] = "1"
                 state.customer["doc_number"] = dni
                 state.customer["legal_name"] = legal_name
@@ -1548,6 +1552,7 @@ class AgentRuntime:
                 dni = _extract_id_number(raw_value, 8)
                 if dni:
                     state.boleta_dni = dni
+                    state.boleta_dni_name = await _lookup_document_holder_name("1", dni, "") or None
                     state.pending_dni_rejection_message = None
                 return
             ruc = _extract_id_number(raw_value, 11)
@@ -1609,11 +1614,23 @@ class AgentRuntime:
         payment_part = f", pagas con {state.payment_method}" if state.payment_method else ""
         name = state.customer.get("name") if state.customer else None
         name_part = f" A nombre de {name}." if name else ""
+        # El nombre/razon social real (via api.apiperu.pe -- ver
+        # _lookup_document_holder_name) se lee de vuelta ademas del numero,
+        # para que el cliente confirme que es la persona/empresa correcta
+        # antes de emitir el comprobante -- pedido explicito: "que me
+        # repita mi DNI o mi RUC" debe traer el dato real de apiperu.pe, no
+        # solo eco de los digitos.
         document_part = ""
         if state.invoice_document_type == "boleta" and state.boleta_dni:
-            document_part = f" Comprobante: boleta con DNI {state.boleta_dni}."
+            document_part = f" Comprobante: boleta con DNI {state.boleta_dni}"
+            if state.boleta_dni_name:
+                document_part += f", a nombre de {state.boleta_dni_name}"
+            document_part += "."
         elif state.invoice_document_type == "factura" and state.factura_ruc:
-            document_part = f" Comprobante: factura con RUC {state.factura_ruc}."
+            document_part = f" Comprobante: factura con RUC {state.factura_ruc}"
+            if state.factura_razon_social:
+                document_part += f", {state.factura_razon_social}"
+            document_part += "."
 
         return (
             f"Perfecto: {', '.join(lines)}. Son {_format_money_for_voice(total)}{time_part}{place_part}{payment_part}."
