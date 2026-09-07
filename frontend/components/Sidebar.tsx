@@ -156,7 +156,7 @@ export function Sidebar({ role }: { role: Role }) {
         ))}
       </nav>
 
-      <div className="border-t border-hud-500/15 px-4 py-4">
+      <div className="space-y-3 border-t border-hud-500/15 px-4 py-4">
         <div className="flex items-center gap-3 border border-surface-700/80 bg-surface-900/70 px-3 py-3">
           <span className="relative flex h-1.5 w-1.5 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-teal opacity-75" />
@@ -166,16 +166,20 @@ export function Sidebar({ role }: { role: Role }) {
             <p className="truncate text-xs font-medium text-slate-300">El Olivar Grill</p>
             <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-slate-500">{ROLE_LABEL[role]}</p>
           </div>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              title="Cerrar sesión"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-surface-700 hover:text-accent-rose"
-            >
-              <LogOut size={14} />
-            </button>
-          </form>
         </div>
+        {/* Boton completo (no solo un icono chico) -- pedido explicito:
+            en cocina/recepcion esto se usa desde una tablet en el
+            mostrador, hace falta un boton grande y con texto, no un icono
+            perdido que nadie nota. */}
+        <form action={logoutAction}>
+          <button
+            type="submit"
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-700 bg-surface-800 px-3 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:border-accent-rose/40 hover:bg-accent-rose/10 hover:text-accent-rose"
+          >
+            <LogOut size={16} />
+            Cerrar sesión
+          </button>
+        </form>
       </div>
     </aside>
   );
