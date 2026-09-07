@@ -41,11 +41,13 @@ export function OrderBoard({
     >
       {columns.map((column) => {
         // El id es autoincremental -- sin un created_at propio en OrderOut,
-        // es la mejor señal de "el mas viejo primero" (FIFO) que tenemos
-        // para que cocina no se salte pedidos por error.
+        // es la mejor señal de orden que tenemos. Mas nuevo primero (bug
+        // real, visto en vivo: con el mas viejo primero, un pedido recien
+        // confirmado aparecia hasta el fondo de una lista larga y el
+        // cocinero no lo veia sin bajar todo el scroll).
         const columnOrders = orders
           .filter((o) => column.statuses.includes(o.status as OrderStatus))
-          .sort((a, b) => a.id - b.id);
+          .sort((a, b) => b.id - a.id);
 
         return (
           <section key={column.key} className="flex flex-col gap-3">

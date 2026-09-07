@@ -5,9 +5,12 @@ factura dos veces). Nunca pega a la red real -- sin apisunat_token
 configurado en el tenant (el caso por defecto en tests, ver conftest.py y
 seed_demo_data), el comprobante se guarda como "draft" y ahi se queda."""
 
+from datetime import UTC, date, datetime
+
 import pytest
 from sqlalchemy import select
 
+from app.domain import invoicing_services
 from app.domain.invoicing_models import Invoice, InvoiceItem, InvoiceSeries
 from app.domain.invoicing_schemas import InvoiceFromOrderRequest
 from app.domain.invoicing_services import InvoicingError, InvoicingService
@@ -72,6 +75,31 @@ async def test_boleta_without_customer_doc_uses_sin_dni_placeholder():
         # Sin apisunat_token configurado, se queda como draft -- nunca intenta red.
         assert invoice.sunat_status == "draft"
         assert "apisunat_token" in (invoice.sunat_message or "")
+
+
+@pytest.mark.asyncio
+async def test_fecha_emision_uses_peru_local_date_not_utc(monkeypatch):
+    # Bug real, visto en vivo: una llamada real a las 8pm hora Peru (que en
+    # UTC ya es la madrugada del dia siguiente) dejaba fecha_emision con la
+    # fecha UTC -- un dia ADELANTADA de la real en Peru. apisunat.pe
+    # rechazaba el comprobante ("debe ser hoy o hasta 3 dias previos a la
+    # fecha actual") porque para SUNAT esa fecha todavia no llegaba, y el
+    # cliente se quedaba sin boleta/factura ni link de WhatsApp.
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed_utc = datetime(2026, 9, 7, 1, 1, 59, tzinfo=UTC)
+            return fixed_utc if tz is None else fixed_utc.astimezone(tz)
+
+    monkeypatch.setattr(invoicing_services, "datetime", _FixedDateTime)
+
+    async with AsyncSessionLocal() as session:
+        order_id = await _make_order(session)
+        invoice = await InvoicingService(session, settings.default_tenant_id).create_from_order(
+            InvoiceFromOrderRequest(order_id=order_id, document_type="boleta")
+        )
+        assert invoice.fecha_emision == date(2026, 9, 6)  # Peru -- no 2026-09-07 (fecha UTC)
+        assert invoice.hora_emision == "20:01:59"
 
 
 @pytest.mark.asyncio

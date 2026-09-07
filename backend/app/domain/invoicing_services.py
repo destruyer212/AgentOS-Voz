@@ -22,7 +22,8 @@ Referencia de la API real (docs.apisunat.pe, leida en vivo):
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import select, update
@@ -32,6 +33,9 @@ from sqlalchemy.orm import selectinload
 from app.domain.invoicing_models import Invoice, InvoiceItem, InvoiceSeries
 from app.domain.invoicing_schemas import InvoiceFromOrderRequest, InvoiceItemOut, InvoiceOut
 from app.domain.models import Customer, Order, OrderItem, Product, Tenant
+from app.infrastructure.config import settings
+
+_LIMA = ZoneInfo(settings.business_timezone)
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +297,17 @@ class InvoicingService:
         serie = await self._default_serie(payload.document_type)
         numero = await self._allocate_number(payload.document_type, serie)
 
-        now = datetime.now(UTC)
+        # Bug real, visto en vivo: usar la fecha UTC directo hace que
+        # fecha_emision quede UN DIA ADELANTADA de la fecha real en Peru
+        # entre las 19:00 y las 23:59 hora Lima (00:00-04:59 UTC del dia
+        # siguiente) -- apisunat.pe rechaza el comprobante porque para
+        # SUNAT esa fecha "todavia no llega" ("debe ser hoy o hasta 3 dias
+        # previos a la fecha actual"). Con esto, una llamada real de las
+        # 8pm dejaba el pedido confirmado pero SIN boleta/factura valida
+        # (por eso nunca llegaba el link por WhatsApp -- ver
+        # app/agents/runtime.py, _issue_invoice_and_notify solo manda el
+        # link si la emision no fallo).
+        now = datetime.now(_LIMA)
         invoice = Invoice(
             tenant_id=self.tenant_id,
             order_id=order.id,
