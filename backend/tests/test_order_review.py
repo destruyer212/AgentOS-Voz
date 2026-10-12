@@ -66,6 +66,21 @@ def test_conversation_id_with_dots_round_trips():
     assert verify_review_token(token) == "v3:algo.con.puntos"
 
 
+def test_token_is_url_safe_for_a_real_telnyx_call_control_id():
+    # Bug real, visto en vivo en la primera llamada que probo esto: un
+    # conversation_id con ":" (call_control_id real de Telnyx, ej.
+    # "v3:sFijHoZ...") viajando SIN codificar en el path de la URL
+    # terminaba con un "%3A" literal segun quien lo tocara (WhatsApp,
+    # Next.js, el fetch al backend) -- el cliente que tocaba el link desde
+    # WhatsApp recibia un 404. El token que va en la URL tiene que ser
+    # base64url puro (A-Za-z0-9_-, sin ":" ni "." ni "%") para que nadie
+    # en la cadena tenga nada que codificar/decodificar.
+    conversation_id = "v3:sFijHoZeYNyHvQl1goikrud1LmjuJy79gw3pTLeuHhxcVk3iwB57og"
+    token = create_review_token(conversation_id)
+    assert all(c.isalnum() or c in "-_" for c in token)
+    assert verify_review_token(token) == conversation_id
+
+
 def test_build_review_link_uses_configured_frontend_url(monkeypatch):
     monkeypatch.setattr(settings, "frontend_public_url", "https://ejemplo.vercel.app/")
     link = build_review_link("conv-123")
