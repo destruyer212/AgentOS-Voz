@@ -263,6 +263,13 @@ def _format_money_for_voice(amount: float) -> str:
     return f"{soles} {sol_unit} con {cents} {cent_unit}"
 
 
+# Pedido explicito: cuando el agente lee "Opción A: X; Opción B: Y...", el
+# cliente no siempre entiende que puede contestar solo con la letra en vez
+# de repetir el nombre completo del plato -- se lo decimos explicito, una
+# sola vez, al final de la pregunta.
+_CLARIFICATION_ANSWER_HINT = " Me puedes responder solo con la letra."
+
+
 def _format_clarification_options(options: list[dict], limit: int = 4) -> str:
     formatted = []
     for index, option in enumerate(options[:limit]):
@@ -524,7 +531,7 @@ def _pending_clarification_question(state: ConversationState) -> str | None:
         return None
     query = pending.get("query") or "producto"
     options = _format_clarification_options(pending.get("options") or [])
-    return f"¿Cuál {query} prefieres: {options}?" if options else None
+    return f"¿Cuál {query} prefieres: {options}?{_CLARIFICATION_ANSWER_HINT}" if options else None
 
 
 def _resolve_pending_clarification(state: ConversationState, message: str) -> dict | None:
@@ -1280,7 +1287,9 @@ class AgentRuntime:
                         # seguir por telefono.
                         label = _MENU_CATEGORY_LABELS.get(category, item.query)
                         option_names = _format_clarification_options(options, limit=5)
-                        clarifications.append(f"En {label} tenemos: {option_names}. ¿Cuál prefieres?")
+                        clarifications.append(
+                            f"En {label} tenemos: {option_names}. ¿Cuál prefieres?{_CLARIFICATION_ANSWER_HINT}"
+                        )
                         state.pending_clarification = {"query": item.query, "options": options[:5]}
                         continue
                 missing.append(item.raw_text)
@@ -1298,7 +1307,7 @@ class AgentRuntime:
                 # por la misma razon que arriba: mas facil de distinguir por
                 # telefono que una lista de nombres seguidos.
                 options = _format_clarification_options(candidates, limit=4)
-                clarifications.append(f"¿Cuál {item.query} prefieres: {options}?")
+                clarifications.append(f"¿Cuál {item.query} prefieres: {options}?{_CLARIFICATION_ANSWER_HINT}")
                 ambiguous_query_tokens.append(set(tokenize(item.query)))
                 state.pending_clarification = {"query": item.query, "options": candidates[:4]}
                 continue

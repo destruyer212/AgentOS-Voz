@@ -976,6 +976,9 @@ async def test_pending_clarification_lists_lettered_options_and_resolves_option_
             )
             assert "opción a" in first.response.lower()
             assert "opción b" in first.response.lower()
+            # Pedido explicito: el cliente no siempre entiende que puede
+            # contestar solo con la letra -- se lo decimos.
+            assert "responder solo con la letra" in first.response.lower()
 
             proposed = await runtime.handle_turn(
                 AgentMessageIn(message="opcion B", conversation_id=conversation_id, channel="phone")
