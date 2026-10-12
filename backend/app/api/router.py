@@ -7,6 +7,7 @@ from app.api.v1 import (
     conversations,
     customers,
     invoicing,
+    order_review,
     orders,
     products,
     system,
@@ -21,6 +22,7 @@ api_router.include_router(customers.router)
 api_router.include_router(orders.router)
 api_router.include_router(invoicing.router)
 api_router.include_router(analytics.router)
+api_router.include_router(order_review.router)
 api_router.include_router(agent.router)
 api_router.include_router(agent_llm_proxy.router)
 api_router.include_router(conversations.router)

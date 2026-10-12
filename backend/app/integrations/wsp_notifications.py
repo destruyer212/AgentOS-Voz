@@ -168,3 +168,80 @@ async def _send_notification(
             "wsp-service: fallo al mandar aviso de WhatsApp order_id=%s type=%s", order.id, notification_type
         )
         return "failed"
+
+
+async def notify_order_review_link(
+    conversation_id: str,
+    customer_name: str | None,
+    customer_phone: str | None,
+    review_link: str,
+    items: list[dict],
+    total: float,
+    fulfillment_type: str | None,
+    delivery_address: str | None,
+    payment_method: str | None,
+) -> str:
+    """Carrito visual durante la llamada (ver
+    docs/08-mejora-carrito-visual-en-llamada.md,
+    app/domain/order_review.py) -- manda el link de revision apenas el
+    pedido llega al resumen final por telefono. Separada de
+    _send_notification/build_order_notification_payload a proposito:
+    todavia NO existe un Order real en este punto (recien se crea cuando
+    el cliente confirma), asi que no hay un OrderOut que pasarle a esas
+    funciones -- los datos vienen directo del ConversationState en
+    memoria (ver agents/runtime.py).
+
+    Reutiliza el tipo 'order_received' del lado de wsp-service (el mas
+    parecido semanticamente -- "ya lo estamos revisando", ver
+    schemas.js/templates.js en whatsapp-service): es un tipo "detallado"
+    ahi, asi que items/total son obligatorios igual que en un aviso real.
+    El link va en 'notes', el unico campo de texto libre que el template
+    deja pasar tal cual -- evita tener que tocar el repo separado de
+    wsp-service para esto. Llamar SIEMPRE via fire_and_forget()."""
+    if not settings.wsp_service_url or not settings.wsp_service_api_key:
+        return "skipped_not_configured"
+    if not customer_phone:
+        logger.info(
+            "wsp-service: sin telefono de cliente, no se manda link de revision conversation_id=%s",
+            conversation_id,
+        )
+        return "skipped_no_phone"
+
+    payload: dict = {
+        "orderId": conversation_id[:64],
+        "type": "order_received",
+        "customerName": customer_name or "Cliente",
+        "customerPhone": customer_phone,
+        "deliveryType": fulfillment_type or "pickup",
+        "items": [
+            {"name": item["name"][:120], "quantity": item["quantity"], "price": item["unit_price"]}
+            for item in items
+        ],
+        "total": total,
+        "notes": f"Revisa tu pedido aquí antes de confirmar: {review_link}",
+    }
+    if fulfillment_type == "delivery" and delivery_address:
+        payload["address"] = delivery_address
+    if payment_method:
+        payload["paymentMethod"] = payment_method
+
+    url = f"{settings.wsp_service_url.rstrip('/')}/api/notifications/order"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+            resp = await client.post(url, json=payload, headers={"x-api-key": settings.wsp_service_api_key})
+        if resp.status_code in (200, 202):
+            logger.info(
+                "wsp-service: link de revision encolado conversation_id=%s status_code=%s",
+                conversation_id, resp.status_code,
+            )
+            return "sent"
+        logger.warning(
+            "wsp-service: respuesta inesperada mandando link de revision conversation_id=%s status_code=%s body=%s",
+            conversation_id, resp.status_code, resp.text[:300],
+        )
+        return "failed"
+    except Exception:
+        logger.exception(
+            "wsp-service: fallo al mandar link de revision conversation_id=%s", conversation_id
+        )
+        return "failed"

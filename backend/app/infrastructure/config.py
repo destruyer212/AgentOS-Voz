@@ -117,6 +117,18 @@ class Settings(BaseSettings):
     # una llamada real.
     apiperu_token: str | None = None
 
+    # Carrito visual durante la llamada (ver
+    # docs/08-mejora-carrito-visual-en-llamada.md,
+    # app/domain/order_review.py) -- feature nueva y AISLADA a proposito:
+    # si no funciona bien, se borra entera (este modulo + su router +
+    # order_review.py + la pagina /revisar en el frontend) sin tocar nada
+    # mas del sistema. `order_review_secret` firma el token temporal del
+    # link; sin configurar usa un default de desarrollo (cambiar en
+    # produccion). `frontend_public_url` es donde vive la pagina publica
+    # (Vercel), para armar el link real que se manda por WhatsApp.
+    order_review_secret: str | None = None
+    frontend_public_url: str = "https://agent-os-voz.vercel.app"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

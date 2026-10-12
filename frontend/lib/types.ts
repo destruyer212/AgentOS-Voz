@@ -333,3 +333,34 @@ export interface InvoicesSummaryReport {
   by_document_type: InvoiceTypeRow[];
   recent_invoices: RecentInvoiceRow[];
 }
+
+// Carrito visual durante la llamada (ver
+// docs/08-mejora-carrito-visual-en-llamada.md,
+// backend/app/api/v1/order_review.py). Espejo de OrderReviewOut -- pagina
+// publica, sin login, el cliente la abre desde un link de WhatsApp.
+export interface OrderReviewItem {
+  name: string;
+  quantity: number;
+  unit_price: number;
+  notes: string | null;
+}
+
+export interface OrderReview {
+  status: string;
+  channel: string;
+  customer_name: string | null;
+  items: OrderReviewItem[];
+  subtotal: number;
+  delivery_fee: number;
+  total: number;
+  fulfillment_type: "delivery" | "pickup" | null;
+  delivery_address: string | null;
+  payment_method: string | null;
+  invoice_document_type: "boleta" | "factura" | null;
+  boleta_dni: string | null;
+  boleta_dni_name: string | null;
+  factura_ruc: string | null;
+  factura_razon_social: string | null;
+  awaiting_confirmation: boolean;
+  closed: boolean;
+}

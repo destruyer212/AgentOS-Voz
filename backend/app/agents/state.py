@@ -104,6 +104,13 @@ class ConversationState:
     pending_document_rejection_message: str | None = None
     pending_dni_rejection_message: str | None = None
     pending_ruc_rejection_message: str | None = None
+    # Carrito visual durante la llamada (ver
+    # docs/08-mejora-carrito-visual-en-llamada.md,
+    # app/domain/order_review.py). Se manda una sola vez por llamada -- si
+    # el cliente corrige algo y vuelve a "awaiting_confirmation", el mismo
+    # link de antes ya refleja el pedido actualizado solo (es un espejo en
+    # vivo del estado), asi que no hace falta (ni conviene) reenviarlo.
+    review_link_sent: bool = False
 
 
 _STORE: dict[str, ConversationState] = {}

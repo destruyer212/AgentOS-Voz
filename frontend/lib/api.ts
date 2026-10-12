@@ -14,6 +14,7 @@ import type {
   BusinessInfoOut,
   InvoicesSummaryReport,
   OrderOut,
+  OrderReview,
   ProductOut,
   SalesByChannelReport,
   SalesByTimeReport,
@@ -113,5 +114,11 @@ export const api = {
     salesByTime: (range: AnalyticsRange) => request<SalesByTimeReport>(`/analytics/sales-by-time${qs({ range })}`),
     invoices: (range: AnalyticsRange, listLimit = 200) =>
       request<InvoicesSummaryReport>(`/analytics/invoices${qs({ range, list_limit: listLimit })}`),
+  },
+  // Carrito visual durante la llamada (ver
+  // docs/08-mejora-carrito-visual-en-llamada.md) -- publica, sin login;
+  // el token firmado en la URL es la unica autorizacion.
+  orderReview: {
+    get: (token: string) => request<OrderReview>(`/order-review/${encodeURIComponent(token)}`),
   },
 };

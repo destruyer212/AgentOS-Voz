@@ -7,6 +7,15 @@ import { ROLE_HOME, SESSION_COOKIE, canAccess, verifySessionToken } from "@/lib/
 // la pantalla propia de ese rol en vez de mostrar un 403 pelado.
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Carrito visual durante la llamada (ver
+  // docs/08-mejora-carrito-visual-en-llamada.md): publica a proposito,
+  // sin login -- el cliente la abre desde un link de WhatsApp, nunca va a
+  // tener sesion de admin/cocina/recepcion. La autorizacion real es el
+  // token firmado en la URL (ver backend/app/domain/order_review.py), no
+  // esta cookie.
+  if (pathname.startsWith("/revisar/")) return NextResponse.next();
+
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const role = await verifySessionToken(token);
 

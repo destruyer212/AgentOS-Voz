@@ -48,6 +48,7 @@ lib/            cliente API, tipos y formateo (moneda, fechas, labels)
 | `/contabilidad/canales` | Ingresos por llamada telefonica vs chat web vs WhatsApp (solo admin) |
 | `/contabilidad/horarios` | Dia de la semana y hora pico de ventas (solo admin) |
 | `/contabilidad/comprobantes` | Boletas/facturas SUNAT emitidas, IGV recaudado, y el PDF de cada una (solo admin) |
+| `/revisar/[token]` | Carrito visual durante la llamada -- **publica, sin login** (ver docs/08) |
 
 ## Login
 
@@ -58,6 +59,10 @@ sin tabla de usuarios en la base de datos -- ver `lib/auth.ts` y
 - **admin**: entra a todo, incluidas `/cocina` y `/recepcion`.
 - **cocina**: solo puede entrar a `/cocina`.
 - **recepcion**: solo puede entrar a `/recepcion`.
+
+Una sola excepcion a proposito: `/revisar/[token]` (carrito visual durante
+la llamada, ver docs/08) es publica -- `middleware.ts` la deja pasar sin
+cookie, porque la autorizacion real ahi es el token firmado en la URL.
 
 Usuario/contraseña se configuran por variable de entorno
 (`AUTH_ADMIN_USER`/`AUTH_ADMIN_PASS`, `AUTH_COCINA_USER`/`AUTH_COCINA_PASS`,

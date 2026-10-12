@@ -1,8 +1,10 @@
+import asyncio
 import uuid
 
 import pytest
 from sqlalchemy import select
 
+from app.agents import runtime as agent_runtime_module
 from app.agents.runtime import AgentRuntime
 from app.agents.state import get_or_create, reset
 from app.ai.router import ai_router
@@ -2245,6 +2247,102 @@ async def test_phone_call_ruc_falls_back_to_spoken_guess_when_apiperu_unavailabl
             assert turn.status == "awaiting_confirmation"
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.factura_razon_social == "Carlos"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_sends_review_link_once_when_reaching_confirmation(monkeypatch):
+    # Carrito visual durante la llamada (ver
+    # docs/08-mejora-carrito-visual-en-llamada.md): al llegar al resumen
+    # final por telefono, se manda UNA vez el link de revision -- nunca
+    # de nuevo aunque el cliente corrija algo y vuelva a confirmacion.
+    calls = []
+
+    async def fake_notify(conversation_id, customer_name, customer_phone, review_link, items, total, *rest):
+        calls.append(
+            {
+                "conversation_id": conversation_id,
+                "customer_phone": customer_phone,
+                "review_link": review_link,
+                "items": items,
+                "total": total,
+            }
+        )
+        return "sent"
+
+    monkeypatch.setattr(agent_runtime_module, "notify_order_review_link", fake_notify)
+
+    # Telefono unico por test -- CustomerService.get_or_create matchea por
+    # telefono, asi que reusar uno fijo (ej. "+51900111222") puede pisar el
+    # doc_type/doc_number de un cliente de OTRO test que corre en el mismo
+    # sqlite compartido (ver conftest.py). Bug real, visto corriendo la
+    # suite completa.
+    phone = _phone()
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                await runtime.handle_turn(
+                    AgentMessageIn(
+                        message=message,
+                        conversation_id=conversation_id,
+                        channel="phone",
+                        customer_phone=phone,
+                    )
+                )
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="boleta, 45678912", conversation_id=conversation_id, channel="phone")
+            )
+            await asyncio.sleep(0)  # deja correr la tarea de fire_and_forget()
+            assert turn.status == "awaiting_confirmation"
+            assert len(calls) == 1
+            assert calls[0]["conversation_id"] == conversation_id
+            assert calls[0]["customer_phone"] == phone
+            assert "/revisar/" in calls[0]["review_link"]
+            assert calls[0]["items"][0]["name"] == "Hamburguesa Clasica"
+
+            # Vuelve a confirmacion (ej. porque algo se repregunto) -- no
+            # debe mandar el link una segunda vez.
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            state.status = "need_payment"
+            await runtime.handle_turn(
+                AgentMessageIn(message="efectivo", conversation_id=conversation_id, channel="phone")
+            )
+            await asyncio.sleep(0)
+            assert len(calls) == 1
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_web_channel_does_not_send_review_link(monkeypatch):
+    # Solo telefono -- el chat web ya ve el pedido en su propia pantalla.
+    calls = []
+
+    async def fake_notify(*args, **kwargs):
+        calls.append(args)
+        return "sent"
+
+    monkeypatch.setattr(agent_runtime_module, "notify_order_review_link", fake_notify)
+
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "efectivo"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(
+                        message=message,
+                        conversation_id=conversation_id,
+                        channel="web",
+                        customer_phone=_phone(),
+                    )
+                )
+            assert turn.status == "awaiting_confirmation"
+            assert calls == []
     finally:
         reset(conversation_id)
 

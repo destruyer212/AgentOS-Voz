@@ -31,6 +31,7 @@ from app.domain.delivery_zones import (
 from app.domain.invoicing_schemas import InvoiceFromOrderRequest, InvoiceOut
 from app.domain.invoicing_services import InvoicingError, InvoicingService
 from app.domain.models import Conversation, Tenant, VoiceTurnMetric, WorkflowRun
+from app.domain.order_review import build_review_link
 from app.domain.schemas import AgentMessageIn, AgentTurnOut, CustomerCreate, OrderOut, ToolCallOut
 from app.domain.services import CustomerService, OrderService
 from app.domain.text_utils import (
@@ -43,7 +44,11 @@ from app.domain.text_utils import (
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal
 from app.integrations import apiperu_client
-from app.integrations.wsp_notifications import fire_and_forget, notify_order_confirmed
+from app.integrations.wsp_notifications import (
+    fire_and_forget,
+    notify_order_confirmed,
+    notify_order_review_link,
+)
 from app.tools.registry import ToolRegistry
 from app.workflows.definitions import RESTAURANT_ORDER_FULFILLMENT
 from app.workflows.engine import WorkflowEngine
@@ -1410,7 +1415,44 @@ class AgentRuntime:
                 prompt = state.pending_ruc_rejection_message
             return await self._finish(state, prompt, "order.create", [], tool_calls, None)
         state.status = "awaiting_confirmation"
+        self._maybe_send_review_link(state)
         return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
+
+    @staticmethod
+    def _maybe_send_review_link(state: ConversationState) -> None:
+        """Carrito visual durante la llamada (ver
+        docs/08-mejora-carrito-visual-en-llamada.md) -- unico punto de
+        enganche de esa feature con el runtime real. Solo por telefono
+        (web/WhatsApp ya VEN el pedido en su propia pantalla/chat, no hace
+        falta un link aparte) y solo una vez por llamada (ver
+        ConversationState.review_link_sent). Si no hay telefono del
+        cliente todavia, notify_order_review_link se encarga de saltarlo
+        en silencio -- esto nunca debe poder demorar ni romper el turno
+        real, por eso fire_and_forget()."""
+        if state.channel != "phone" or state.review_link_sent:
+            return
+        phone = state.customer.get("phone") if state.customer else None
+        if not phone:
+            return
+        state.review_link_sent = True
+        subtotal = sum(item.quantity * item.unit_price for item in state.items)
+        delivery_fee = settings.delivery_fee_soles if state.fulfillment_type == "delivery" else 0.0
+        fire_and_forget(
+            notify_order_review_link(
+                state.id,
+                state.customer.get("name") if state.customer else None,
+                phone,
+                build_review_link(state.id),
+                [
+                    {"name": item.name, "quantity": item.quantity, "unit_price": item.unit_price}
+                    for item in state.items
+                ],
+                round(subtotal + delivery_fee, 2),
+                state.fulfillment_type,
+                state.delivery_address,
+                state.payment_method,
+            )
+        )
 
     async def _handle_detail_answer(
         self, state: ConversationState, message: str, tool_calls: list[ToolCallOut]
