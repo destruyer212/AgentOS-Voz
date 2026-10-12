@@ -60,6 +60,11 @@ class ConversationState:
     # AgentRuntime._resolve_pending_clarification. None si no hay ninguna
     # pregunta de este tipo pendiente.
     pending_clarification: dict[str, Any] | None = None
+    # Confirmacion corta para respuestas fragiles de voz a una aclaracion
+    # pendiente: "la ultima", "la segunda", "la de 20.90". Antes de agregar
+    # el producto, el agente pregunta "confirmas que es X?" para evitar que
+    # un ordinal o precio mal transcrito agregue el item equivocado.
+    pending_clarification_confirmation: dict[str, Any] | None = None
     # Señal para telefonia (ver voice_agent_bridge.py): el pedido se
     # confirmo de verdad en este turno, asi que en cuanto termine de sonar
     # la respuesta de despedida, hay que colgar la llamada sola. Separado

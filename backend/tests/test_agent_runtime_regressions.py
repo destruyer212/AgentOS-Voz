@@ -853,6 +853,198 @@ async def test_elliptical_answer_resolves_pending_clarification():
 
 
 @pytest.mark.asyncio
+async def test_pending_clarification_resolves_by_spoken_price():
+    # Llamada real: despues de listar varias opciones de anticucho, el
+    # cliente respondio "el de veintiocho soles con cincuenta centimos".
+    # Antes eso se buscaba como producto nuevo y fallaba, aunque el precio
+    # identificaba una unica opcion ofrecida.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-ANT-PRECIO-PRI", "Anticucho Pruebaprecio Primera", 23.5),
+            ("TEST-ANT-PRECIO-SEG", "Anticucho Pruebaprecio Segunda", 28.5),
+            ("TEST-ANT-PRECIO-TER", "Anticucho Pruebaprecio Tercera", 31.0),
+        ):
+            product = Product(tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="qa7")
+            session.add(product)
+            await session.flush()
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            first = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero un anticucho pruebaprecio",
+                    conversation_id=conversation_id,
+                    channel="phone",
+                )
+            )
+            assert first.intent == "order.clarify"
+
+            second = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="El de veintiocho soles con cincuenta centimos.",
+                    conversation_id=conversation_id,
+                    channel="phone",
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.items == []
+            assert "confirmas" in second.response.lower()
+            assert "anticucho pruebaprecio segunda" in second.response.lower()
+            assert state.pending_clarification_confirmation is not None
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(message="si", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["Anticucho Pruebaprecio Segunda"]
+            assert "prefieres" not in confirmed.response.lower()
+            assert state.pending_clarification is None
+            assert state.pending_clarification_confirmation is None
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_pending_clarification_resolves_by_last_option():
+    # Otro fragmento de la misma llamada: "quiero la ultima opcion que me
+    # dijiste" debe resolver contra la lista pendiente, no disparar una
+    # busqueda nueva por "ultima opcion".
+    conversation_id = _conversation_id()
+    options = []
+    async with AsyncSessionLocal() as session:
+        for sku, name, price in (
+            ("TEST-ANT-ULTIMA-A", "Anticucho Ultimaopcion Alfa", 21.0),
+            ("TEST-ANT-ULTIMA-B", "Anticucho Ultimaopcion Bravo", 24.0),
+            ("TEST-ANT-ULTIMA-C", "Anticucho Ultimaopcion Charlie", 27.0),
+        ):
+            product = Product(tenant_id=settings.default_tenant_id, sku=sku, name=name, price=price, category="qa8")
+            session.add(product)
+            await session.flush()
+            options.append({"id": product.id, "name": product.name, "price": product.price})
+            session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        state = get_or_create(conversation_id, settings.default_tenant_id)
+        state.channel = "phone"
+        state.pending_clarification = {"query": "anticucho", "options": options}
+
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            second = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero la ultima opcion que me dijiste.",
+                    conversation_id=conversation_id,
+                    channel="phone",
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.items == []
+            assert "confirmas" in second.response.lower()
+            assert "anticucho ultimaopcion charlie" in second.response.lower()
+            assert state.pending_clarification_confirmation is not None
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(message="si", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["Anticucho Ultimaopcion Charlie"]
+            assert "prefieres" not in confirmed.response.lower()
+            assert state.pending_clarification is None
+            assert state.pending_clarification_confirmation is None
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_pending_clarification_lists_lettered_options_and_resolves_option_b():
+    # Voz: es mas facil decir "opcion B" que repetir un nombre largo del
+    # menu. La lista debe venir rotulada y la seleccion por letra debe pedir
+    # confirmacion antes de agregar.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            first = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero una hamburguesa", conversation_id=conversation_id, channel="phone")
+            )
+            assert "opción a" in first.response.lower()
+            assert "opción b" in first.response.lower()
+
+            proposed = await runtime.handle_turn(
+                AgentMessageIn(message="opcion B", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.items == []
+            assert "confirmas" in proposed.response.lower()
+            assert state.pending_clarification_confirmation is not None
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(message="si", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert len(state.items) == 1
+            assert "hamburguesa" in state.items[0].name.lower()
+            assert "prefieres" not in confirmed.response.lower()
+            assert state.pending_clarification_confirmation is None
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_pending_clarification_resolves_close_spoken_price_with_confirmation():
+    # Si el producto cuesta 20.90 y el STT escucha 20.80, la intencion es
+    # suficientemente cercana para proponer esa opcion, pero nunca para
+    # agregarla sin confirmar.
+    conversation_id = _conversation_id()
+    async with AsyncSessionLocal() as session:
+        product = Product(
+            tenant_id=settings.default_tenant_id,
+            sku="TEST-ANT-PRECIO-CERCA",
+            name="Anticucho Precio Cercano",
+            price=20.90,
+            category="qa9",
+        )
+        session.add(product)
+        await session.flush()
+        options = [{"id": product.id, "name": product.name, "price": product.price}]
+        session.add(InventoryItem(tenant_id=settings.default_tenant_id, product_id=product.id, quantity=100))
+        await session.commit()
+
+    try:
+        state = get_or_create(conversation_id, settings.default_tenant_id)
+        state.channel = "phone"
+        state.pending_clarification = {"query": "anticucho", "options": options}
+
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            proposed = await runtime.handle_turn(
+                AgentMessageIn(
+                    message="Quiero la que esta veinte soles con ochenta centimos.",
+                    conversation_id=conversation_id,
+                    channel="phone",
+                )
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.items == []
+            assert "confirmas" in proposed.response.lower()
+            assert "anticucho precio cercano" in proposed.response.lower()
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(message="si", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert [item.name for item in state.items] == ["Anticucho Precio Cercano"]
+            assert "prefieres" not in confirmed.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_product_search_does_not_match_word_hidden_mid_word():
     # Bug real, visto en vivo: "cola" (el cliente pidiendo una gaseosa) es
     # substring de "chocolate" a mitad de palabra ("cho-COLA-te"), asi que
@@ -891,7 +1083,7 @@ async def test_rule_based_parser_does_not_mangle_yape_via_y_prefix():
     parsed_y = await provider.parse_message(
         "quiero una hamburguesa y una coca cola", awaiting_confirmation=False
     )
-    assert [item.query for item in parsed_y.items] == ["hamburguesa", "coca cola"]
+    assert [item.query for item in parsed_y.items] == ["hamburguesa", "Coca-Cola"]
 
 
 @pytest.mark.asyncio
@@ -1162,6 +1354,36 @@ async def test_yape_misheard_as_yate_still_resolves_as_payment():
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.payment_method == "yape"
             assert "no encontré" not in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_payment_answer_with_trailing_no_does_not_cancel_order():
+    # Llamada real: "Con Yape, pues" llego como "Con Yape Pesa no". El
+    # "no" suelto se leia como cancelacion global y borraba el pedido; por
+    # eso, cuando el cliente agregaba una Coca-Cola, el agente volvia a pedir
+    # delivery/pago como si fuera un pedido nuevo.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local"):
+                await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.status == "need_payment"
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Con Yape Pesa no.", conversation_id=conversation_id, channel="phone")
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert turn.status == "need_document"
+            assert state.payment_method == "yape"
+            assert [item.name for item in state.items] == ["Hamburguesa Clasica"]
+            assert "cancelado" not in turn.response.lower()
     finally:
         reset(conversation_id)
 
@@ -1865,6 +2087,64 @@ async def test_phone_call_can_give_document_type_and_dni_in_one_breath():
             assert turn.status == "awaiting_confirmation"
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert state.boleta_dni == "45678912"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_can_add_item_while_asking_boleta_or_factura():
+    # Bug real en llamada: si ya estaba armado el pedido y el agente pregunto
+    # "boleta o factura", decir "Coca Kola" se descartaba como comprobante
+    # invalido en vez de agregar la bebida. Debe editar el pedido y repetir
+    # la misma pregunta fiscal, sin volver a pedir delivery ni pago.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "tarjeta"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            assert turn.status == "need_document"
+
+            edited = await runtime.handle_turn(
+                AgentMessageIn(message="Coca Kola", conversation_id=conversation_id, channel="phone")
+            )
+
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert edited.status == "need_document"
+            assert "boleta" in edited.response.lower() and "factura" in edited.response.lower()
+            assert state.fulfillment_type == "pickup"
+            assert state.payment_method == "tarjeta"
+            assert any("coca" in item.name.lower() for item in state.items)
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_phone_call_can_add_item_while_waiting_for_boleta_dni():
+    # Mismo caso, pero despues de elegir boleta: el cliente todavia puede
+    # agregar algo al pedido y el agente debe volver a pedir el DNI.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "tarjeta", "boleta"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            assert turn.status == "need_dni"
+
+            edited = await runtime.handle_turn(
+                AgentMessageIn(message="Coca Kola", conversation_id=conversation_id, channel="phone")
+            )
+
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert edited.status == "need_dni"
+            assert "dni" in edited.response.lower()
+            assert state.invoice_document_type == "boleta"
+            assert any("coca" in item.name.lower() for item in state.items)
     finally:
         reset(conversation_id)
 

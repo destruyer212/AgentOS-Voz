@@ -238,6 +238,8 @@ _MODIFIER_OPTIONS = {
     "acompanamientos": ["papas fritas", "ensalada"],
 }
 
+_OPTION_LABELS = ("A", "B", "C", "D", "E")
+
 
 def _format_money_for_voice(amount: float) -> str:
     value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -254,6 +256,95 @@ def _format_money_for_voice(amount: float) -> str:
 
     cent_unit = "céntimo" if cents == 1 else "céntimos"
     return f"{soles} {sol_unit} con {cents} {cent_unit}"
+
+
+def _format_clarification_options(options: list[dict], limit: int = 4) -> str:
+    formatted = []
+    for index, option in enumerate(options[:limit]):
+        label = _OPTION_LABELS[index]
+        product = speakify_product_name(option["name"])
+        if "price" in option:
+            product = f"{product} a {_format_money_for_voice(option['price'])}"
+        formatted.append(f"Opción {label}: {product}")
+    return "; ".join(formatted)
+
+
+def _spoken_price_codes(amount: float) -> set[str]:
+    """Codigos como los reconstruye _spoken_digit_groups para comparar una
+    respuesta oral de precio contra una opcion del menu.
+
+    Ej.: 28.50 -> {"2850"} porque "veintiocho soles con cincuenta" llega
+    como grupos 28 + 50. Para centavos de un digito aceptamos tambien la
+    forma sin cero ("cinco centimos" -> "285") ademas de "2805".
+    """
+    value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    soles = int(value)
+    cents = int((value - Decimal(soles)) * 100)
+    if cents == 0:
+        return {str(soles)}
+    return {f"{soles}{cents:02d}", f"{soles}{cents}"}
+
+
+def _resolve_candidate_by_spoken_price(candidates: list[dict], message: str) -> dict | None:
+    spoken = _spoken_digit_groups(message)
+    if not spoken:
+        return None
+    exact_matches = [
+        candidate
+        for candidate in candidates
+        if "price" in candidate and spoken in _spoken_price_codes(candidate["price"])
+    ]
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        return None
+
+    # Voz: "veinte con noventa" puede llegar como "veinte con ochenta".
+    # Aceptamos una diferencia maxima de 10 centimos SOLO si deja una unica
+    # opcion candidata; igual se confirma antes de agregar.
+    if len(spoken) < 3 or not spoken.isdigit():
+        return None
+    spoken_amount = Decimal(f"{spoken[:-2]}.{spoken[-2:]}")
+    fuzzy_matches = [
+        candidate
+        for candidate in candidates
+        if "price" in candidate
+        and abs(Decimal(str(candidate["price"])).quantize(Decimal("0.01")) - spoken_amount) <= Decimal("0.10")
+    ]
+    return fuzzy_matches[0] if len(fuzzy_matches) == 1 else None
+
+
+def _option_index_from_message(message: str, option_count: int) -> int | None:
+    lowered = normalize_text(message)
+    if option_count <= 0:
+        return None
+    if re.search(r"\bultim[ao]s?\b", lowered):
+        return option_count - 1
+
+    letter_patterns = (
+        (0, r"\b(?:opcion\s+a|letra\s+a|la\s+a|a)\b"),
+        (1, r"\b(?:opcion\s+(?:b|be)|letra\s+(?:b|be)|la\s+(?:b|be)|(?:b|be))\b"),
+        (2, r"\b(?:opcion\s+(?:c|ce)|letra\s+(?:c|ce)|la\s+(?:c|ce)|(?:c|ce))\b"),
+        (3, r"\b(?:opcion\s+(?:d|de)|letra\s+(?:d|de)|la\s+(?:d|de)|(?:d|de))\b"),
+        (4, r"\b(?:opcion\s+(?:e|e)|letra\s+(?:e|e)|la\s+(?:e|e)|e)\b"),
+    )
+    for index, pattern in letter_patterns:
+        if index < option_count and re.fullmatch(pattern, lowered):
+            return index
+        if index < option_count and re.search(pattern, lowered) and "opcion" in lowered:
+            return index
+
+    ordinal_patterns = (
+        (0, r"\b(?:primera|primero|primer|opcion\s+1|opcion\s+uno|numero\s+1|numero\s+uno)\b"),
+        (1, r"\b(?:segunda|segundo|opcion\s+2|opcion\s+dos|numero\s+2|numero\s+dos)\b"),
+        (2, r"\b(?:tercera|tercero|tercer|opcion\s+3|opcion\s+tres|numero\s+3|numero\s+tres)\b"),
+        (3, r"\b(?:cuarta|opcion\s+4|opcion\s+cuatro|numero\s+4|numero\s+cuatro)\b"),
+        (4, r"\b(?:quinta|quinto|opcion\s+5|opcion\s+cinco|numero\s+5|numero\s+cinco)\b"),
+    )
+    for index, pattern in ordinal_patterns:
+        if index < option_count and re.search(pattern, lowered):
+            return index
+    return None
 
 
 _NAME_PREFIX_RE = re.compile(
@@ -320,6 +411,41 @@ def _match_invoice_document_type(lowered: str) -> str | None:
     if any(k in lowered for k in ("boleta", "boleto", "dni")):
         return "boleta"
     return None
+
+
+def _looks_like_fiscal_answer(current: str, message: str, lowered: str) -> bool:
+    """Distingue una respuesta fiscal real de una edicion del pedido.
+
+    En telefono, el cliente puede agregar productos incluso cuando el agente
+    acaba de preguntar boleta/factura o DNI/RUC. Antes, esos turnos se
+    procesaban de forma 100% determinista y "Coca Kola" se descartaba como
+    respuesta invalida de comprobante. Solo tomamos la ruta fiscal si hay una
+    senal clara de comprobante/documento o si el cliente esta dictando numeros.
+    """
+    document_type = _match_invoice_document_type(lowered)
+    if current == "need_document":
+        return document_type is not None
+
+    if current == "need_dni":
+        if document_type == "factura":
+            return True
+        return (
+            _extract_id_number(message, 8) is not None
+            or bool(re.search(r"\d", message))
+            or "dni" in lowered
+            or "documento" in lowered
+            or len(_spoken_digit_groups(message)) >= 3
+        )
+
+    if current == "need_ruc":
+        return (
+            document_type is not None
+            or _extract_id_number(message, 11) is not None
+            or bool(re.search(r"\d", message))
+            or len(_spoken_digit_groups(message)) >= 3
+        )
+
+    return False
 
 
 _DETAIL_LITERAL_BLOCKLIST = (
@@ -392,12 +518,7 @@ def _pending_clarification_question(state: ConversationState) -> str | None:
     if not pending:
         return None
     query = pending.get("query") or "producto"
-    options = ", ".join(
-        f"{speakify_product_name(option['name'])} a {_format_money_for_voice(option['price'])}"
-        if "price" in option
-        else speakify_product_name(option["name"])
-        for option in (pending.get("options") or [])[:4]
-    )
+    options = _format_clarification_options(pending.get("options") or [])
     return f"¿Cuál {query} prefieres: {options}?" if options else None
 
 
@@ -414,6 +535,12 @@ def _resolve_pending_clarification(state: ConversationState, message: str) -> di
     candidates = pending.get("options") or []
     if not candidates:
         return None
+    option_index = _option_index_from_message(message, len(candidates))
+    if option_index is not None:
+        return candidates[option_index]
+    price_match = _resolve_candidate_by_spoken_price(candidates, message)
+    if price_match:
+        return price_match
     # "un cuarto"/"medio" (como lo dice el cliente) -> "1/4"/"1/2" (como
     # esta el nombre en el catalogo) -- ver normalize_spoken_fractions.
     message_tokens = tokenize(normalize_spoken_fractions(message))
@@ -431,10 +558,25 @@ def _resolve_pending_clarification(state: ConversationState, message: str) -> di
     return None
 
 
+def _pending_resolution_needs_confirmation(pending: dict, message: str, resolved: dict) -> bool:
+    candidates = pending.get("options") or []
+    option_index = _option_index_from_message(message, len(candidates))
+    if option_index is not None:
+        return candidates[option_index].get("id") == resolved.get("id")
+    price_match = _resolve_candidate_by_spoken_price(candidates, message)
+    return bool(price_match and price_match.get("id") == resolved.get("id"))
+
+
 def _item_answers_pending_clarification(
     pending: dict, resolved: dict, item: ParsedItem
 ) -> bool:
     candidates = pending.get("options") or []
+    option_index = _option_index_from_message(item.raw_text, len(candidates))
+    if option_index is not None and candidates[option_index].get("id") == resolved.get("id"):
+        return True
+    price_match = _resolve_candidate_by_spoken_price(candidates, item.raw_text)
+    if price_match and price_match.get("id") == resolved.get("id"):
+        return True
     # normalize_spoken_fractions: "un cuarto de pollo" (lo que dijo el
     # cliente, y lo que queda en item.query tras sacarle un modificador
     # como "con anticucho") nunca matcheaba el "1/4" del nombre real del
@@ -509,6 +651,7 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.payment_method = None
     state.silence_retries = 0
     state.pending_clarification = None
+    state.pending_clarification_confirmation = None
     state.hangup_after_response = False
     state.pending_zone_rejection_message = None
     state.pending_address_awaiting_district = None
@@ -624,6 +767,11 @@ class AgentRuntime:
             await self._resolve_customer(state, payload)
 
         tool_calls: list[ToolCallOut] = []
+
+        if state.pending_clarification_confirmation:
+            return await self._handle_pending_clarification_confirmation(
+                state, payload.message, tool_calls
+            )
 
         # "¿Atienden hoy?"/"¿hasta que hora abren?" -- se chequea ANTES que
         # todo lo demas (incluso antes de la recoleccion de datos) porque es
@@ -1065,6 +1213,19 @@ class AgentRuntime:
             ):
                 resolved = _resolve_pending_clarification(state, item.raw_text)
                 if resolved:
+                    if _pending_resolution_needs_confirmation(
+                        state.pending_clarification, item.raw_text, resolved
+                    ):
+                        state.pending_clarification_confirmation = {
+                            "product": resolved,
+                            "quantity": item.quantity,
+                            "notes": item.notes,
+                        }
+                        clarifications.append(
+                            f"Creo que es {speakify_product_name(resolved['name'])} "
+                            f"a {_format_money_for_voice(resolved['price'])}. ¿Confirmas, sí o no?"
+                        )
+                        continue
                     state.pending_clarification = None
                     self._add_or_increment_item(state, resolved, item.quantity, item.notes)
                     added.append(f"{item.quantity} {speakify_product_name(resolved['name'])}")
@@ -1113,10 +1274,7 @@ class AgentRuntime:
                         # menu.inquiry (linea ~607), mucho mas facil de
                         # seguir por telefono.
                         label = _MENU_CATEGORY_LABELS.get(category, item.query)
-                        option_names = ", ".join(
-                            f"{speakify_product_name(option['name'])} a {_format_money_for_voice(option['price'])}"
-                            for option in options[:5]
-                        )
+                        option_names = _format_clarification_options(options, limit=5)
                         clarifications.append(f"En {label} tenemos: {option_names}. ¿Cuál prefieres?")
                         state.pending_clarification = {"query": item.query, "options": options[:5]}
                         continue
@@ -1134,10 +1292,7 @@ class AgentRuntime:
                 # variantes: preguntamos en vez de adivinar cual. Con precio
                 # por la misma razon que arriba: mas facil de distinguir por
                 # telefono que una lista de nombres seguidos.
-                options = ", ".join(
-                    f"{speakify_product_name(c['name'])} a {_format_money_for_voice(c['price'])}"
-                    for c in candidates[:4]
-                )
+                options = _format_clarification_options(candidates, limit=4)
                 clarifications.append(f"¿Cuál {item.query} prefieres: {options}?")
                 ambiguous_query_tokens.append(set(tokenize(item.query)))
                 state.pending_clarification = {"query": item.query, "options": candidates[:4]}
@@ -1162,6 +1317,38 @@ class AgentRuntime:
             self._add_or_increment_item(state, best, item.quantity, item.notes)
             added.append(f"{item.quantity} {speakify_product_name(best['name'])}")
         return missing, clarifications, added
+
+    async def _handle_pending_clarification_confirmation(
+        self, state: ConversationState, message: str, tool_calls: list[ToolCallOut]
+    ) -> AgentTurnOut:
+        pending_confirmation = state.pending_clarification_confirmation or {}
+        product = pending_confirmation.get("product")
+        if not product:
+            state.pending_clarification_confirmation = None
+            return await self._finish(
+                state, "No te entendí bien. ¿Me repites cuál opción quieres?", "order.clarify", [], tool_calls, None
+            )
+
+        words = set(normalize_text(message).split())
+        if words and words <= CONFIRM_WORDS:
+            state.pending_clarification_confirmation = None
+            state.pending_clarification = None
+            quantity = int(pending_confirmation.get("quantity") or 1)
+            notes = pending_confirmation.get("notes")
+            self._add_or_increment_item(state, product, quantity, notes)
+            return await self._advance_order(state, tool_calls)
+
+        if words & CANCEL_WORDS:
+            state.pending_clarification_confirmation = None
+            clarification = _pending_clarification_question(state)
+            response = clarification or "Ok, ¿cuál opción prefieres entonces?"
+            return await self._finish(state, response, "order.clarify", [], tool_calls, None)
+
+        response = (
+            f"Para no equivocarme: ¿confirmas que quieres "
+            f"{speakify_product_name(product['name'])}, sí o no?"
+        )
+        return await self._finish(state, response, "order.clarify", [], tool_calls, None)
 
     @staticmethod
     def _add_or_increment_item(state: ConversationState, product: dict, quantity: int, notes: str | None) -> None:
@@ -1237,9 +1424,13 @@ class AgentRuntime:
         if is_audio_repair_message(message):
             return await self._finish(state, f"Te escucho. {pending_prompt}", "smalltalk", [], tool_calls, None)
 
+        payment_match = _match_payment(lowered) if current == "need_payment" else None
+
         # Cancelar sigue disponible en cualquier momento, incluso a mitad de
-        # esta recoleccion de datos.
-        if words & CANCEL_WORDS:
+        # esta recoleccion de datos. Pero en voz no tratamos un "no" suelto
+        # como cancelacion si el mismo turno trae una forma de pago clara:
+        # Deepgram puede transcribir "con Yape, pues" como "con Yape ... no".
+        if words & CANCEL_WORDS and not payment_match:
             _reset_order_draft(state)
             state.status = "collecting"
             return await self._finish(
@@ -1273,10 +1464,15 @@ class AgentRuntime:
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
-        # Comprobante y documento fiscal: extraccion determinista, sin NLU.
-        # La voz tiene que quedar en datos exactos: boleta/factura, DNI de 8
-        # digitos o RUC de 11.
-        if current in {"need_document", "need_dni", "need_ruc"}:
+        # Comprobante y documento fiscal: si el turno trae una respuesta
+        # fiscal clara, se procesa deterministamente. Si no, dejamos que el
+        # parser intente tratarlo como edicion del pedido antes de rechazarlo
+        # como DNI/RUC/documento invalido. Caso real: al preguntar "boleta o
+        # factura", el cliente dijo "Coca Kola"; eso debe agregar la bebida y
+        # luego repetir la pregunta fiscal, no perder el item.
+        if current in {"need_document", "need_dni", "need_ruc"} and _looks_like_fiscal_answer(
+            current, message, lowered
+        ):
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
@@ -1288,7 +1484,7 @@ class AgentRuntime:
                 await self._apply_detail_answer(state, current, match)
                 return await self._advance_order(state, tool_calls)
         elif current == "need_payment":
-            match = _match_payment(lowered)
+            match = payment_match
             if match:
                 await self._apply_detail_answer(state, current, match)
                 return await self._advance_order(state, tool_calls)
@@ -1360,6 +1556,10 @@ class AgentRuntime:
 
         if parsed.detail_answer.answers_pending_question and parsed.detail_answer.value:
             await self._apply_detail_answer(state, current, parsed.detail_answer.value)
+            return await self._advance_order(state, tool_calls)
+
+        if current in {"need_document", "need_dni", "need_ruc"}:
+            await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
         # Ultima defensa: si no se entendio si respondia la pregunta o si
@@ -1517,6 +1717,14 @@ class AgentRuntime:
             return
 
         if current == "need_dni":
+            lowered = normalize_text(raw_value)
+            if _match_invoice_document_type(lowered) == "factura" and not _extract_id_number(raw_value, 8):
+                state.invoice_document_type = "factura"
+                state.wants_factura = True
+                state.boleta_dni = None
+                state.boleta_dni_name = None
+                state.pending_dni_rejection_message = None
+                return
             dni = _extract_id_number(raw_value, 8)
             if not dni:
                 state.pending_dni_rejection_message = (

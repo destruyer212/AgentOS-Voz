@@ -38,9 +38,9 @@ _INCREASE_PREFIXES = ("aumenta ", "aumentar ", "agrega mas ", "mas ", "dame mas 
 _DECREASE_PREFIXES = ("disminuye ", "reduce ", "menos ", "un poco menos de ")
 _ADD_PREFIXES = (
     "quiero ", "quisiera ", "dame ", "deme ", "pideme ", "pídeme ", "necesito ",
-    "quiero pedir ", "quiero ordenar ", "me provoca ", "me provoca pedir ",
+    "quiero agregar ", "quiero pedir ", "quiero ordenar ", "me provoca ", "me provoca pedir ",
     "me falta ", "falta ", "se me olvido ", "se me olvidó ", "tambien quiero ",
-    "también quiero ", "agregame ", "agrégame ", "ponme ", "ah ", "ah y ", "y ",
+    "también quiero ", "agrega ", "agregar ", "agregame ", "agrégame ", "ponme ", "ah ", "ah y ", "y ",
 )
 _EDIT_PREFIXES = _REMOVE_PREFIXES + _INCREASE_PREFIXES + _DECREASE_PREFIXES
 _SET_TO_PATTERN = rf"\b(?:a|en|para que sean|que sean|dejalo en|déjalo en|dejala en|déjala en)\s+{QTY_PATTERN}\b\s*$"
@@ -117,7 +117,7 @@ _PRODUCT_SEQUENCE_PATTERNS = [
         (r"(?<!\w)hamburguesas?(?!\w)", "hamburguesa"),
         (r"(?<!\w)(?:inca|inka)\s+(?:kola|cola)s?(?!\w)", "Inca Kola"),
         (r"(?<!\w)(?:indo\s*kola|indocola)s?(?!\w)", "Inca Kola"),
-        (r"(?<!\w)coca[-\s]?colas?(?!\w)", "Coca-Cola"),
+        (r"(?<!\w)coca[-\s]?(?:colas?|kolas?)(?!\w)", "Coca-Cola"),
         (r"(?<!\w)chichas?\s+moradas?(?!\w)", "chicha morada"),
         (r"(?<!\w)limonadas?(?!\w)", "limonada"),
         (r"(?<!\w)aguas?(?:\s+minerales?)?(?!\w)", "agua mineral"),
@@ -209,7 +209,7 @@ def _normalize_prefix(prefix: str) -> str:
 
 def _strip_known_prefix(chunk: str, prefixes: tuple[str, ...]) -> tuple[str, bool]:
     lowered = normalize_text(chunk)
-    for prefix in prefixes:
+    for prefix in sorted(prefixes, key=len, reverse=True):
         if lowered.startswith(_normalize_prefix(prefix)):
             return chunk[len(prefix):].strip(), True
     return chunk, False
@@ -330,6 +330,17 @@ def _split_known_product_sequence(text: str) -> list[str] | None:
     return [canonical for _, _, canonical in matches]
 
 
+def _single_known_product_alias(text: str) -> str | None:
+    matches = _known_product_matches(text)
+    if len(matches) != 1:
+        return None
+    start, end, canonical = matches[0]
+    normalized = normalize_text(text)
+    if _gap_is_only_product_sequence_filler(normalized[:start]) and _gap_is_only_product_sequence_filler(normalized[end:]):
+        return canonical
+    return None
+
+
 def _parse_items(text: str) -> list[ParsedItem]:
     # Descarta relleno antes del primer producto ("Hola, quiero...") para que
     # la cantidad no quede pegada a palabras como "quiero"/"hola".
@@ -406,6 +417,10 @@ def _parse_items(text: str) -> list[ParsedItem]:
                     )
                 )
             continue
+
+        alias = _single_known_product_alias(rest)
+        if alias:
+            rest = alias
 
         rest, note = _extract_note(rest)
         rest = _strip_leading_articles(rest)
