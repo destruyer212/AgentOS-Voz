@@ -32,3 +32,4 @@ frontend/.env*
 Thumbs.db
 .firecrawl/
 *.tar.gz
+tmp/

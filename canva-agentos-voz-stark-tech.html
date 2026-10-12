@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentOS Voz - Deck Tecnico Futurista</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700;800&display=swap");
+
+    :root {
+      --bg: #020712;
+      --navy: #071421;
+      --panel: rgba(5, 19, 33, 0.88);
+      --panel-2: rgba(8, 31, 52, 0.78);
+      --cyan: #19e6ff;
+      --cyan-soft: rgba(25, 230, 255, 0.2);
+      --green: #24f6a8;
+      --green-soft: rgba(36, 246, 168, 0.18);
+      --blue: #356cff;
+      --amber: #ffbd54;
+      --red: #ff5b6e;
+      --text: #f6fbff;
+      --muted: #abc4d8;
+      --line: rgba(25, 230, 255, 0.34);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #000;
+      color: var(--text);
+      font-family: Inter, Arial, sans-serif;
+    }
+
+    .slide {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      padding: 64px 78px 58px;
+      background:
+        radial-gradient(circle at 17% 12%, rgba(25, 230, 255, 0.28), transparent 30%),
+        radial-gradient(circle at 79% 18%, rgba(36, 246, 168, 0.19), transparent 26%),
+        radial-gradient(circle at 54% 92%, rgba(53, 108, 255, 0.25), transparent 34%),
+        linear-gradient(135deg, #020712 0%, #071421 47%, #01040b 100%);
+      isolation: isolate;
+      page-break-after: always;
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -3;
+      background-image:
+        linear-gradient(rgba(25, 230, 255, 0.075) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(25, 230, 255, 0.075) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(90deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
+    }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 24px;
+      border: 1px solid rgba(25, 230, 255, 0.22);
+      box-shadow: inset 0 0 50px rgba(25, 230, 255, 0.08);
+      z-index: -2;
+    }
+
+    .rings {
+      position: absolute;
+      right: -80px;
+      top: 90px;
+      width: 700px;
+      height: 700px;
+      z-index: -1;
+      opacity: 0.82;
+    }
+
+    .ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 2px solid rgba(25, 230, 255, 0.45);
+      box-shadow: 0 0 30px rgba(25, 230, 255, 0.18), inset 0 0 46px rgba(53, 108, 255, 0.12);
+    }
+
+    .ring.r1 {
+      inset: 22px;
+    }
+
+    .ring.r2 {
+      inset: 122px;
+      border-color: rgba(36, 246, 168, 0.42);
+    }
+
+    .ring.r3 {
+      inset: 238px;
+      background: radial-gradient(circle, rgba(25, 230, 255, 0.24), transparent 68%);
+    }
+
+    .scanline {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 48%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(25, 230, 255, 0.78), transparent);
+      box-shadow: 0 0 18px rgba(25, 230, 255, 0.65);
+      opacity: 0.5;
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 26px;
+    }
+
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 13px;
+      padding: 10px 16px;
+      border: 1px solid rgba(25, 230, 255, 0.42);
+      background: rgba(3, 13, 24, 0.76);
+      color: var(--cyan);
+      font-size: 19px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 11px;
+      height: 11px;
+      background: var(--green);
+      border-radius: 50%;
+      box-shadow: 0 0 18px var(--green);
+    }
+
+    .num {
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 0.93;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 1160px;
+      font-size: 112px;
+    }
+
+    h2 {
+      max-width: 1280px;
+      font-size: 72px;
+    }
+
+    .sub {
+      margin: 26px 0 0;
+      max-width: 980px;
+      color: #ddecfa;
+      font-size: 30px;
+      line-height: 1.26;
+      font-weight: 700;
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", Consolas, monospace;
+    }
+
+    .green {
+      color: var(--green);
+    }
+
+    .cyan {
+      color: var(--cyan);
+    }
+
+    .amber {
+      color: var(--amber);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr 0.82fr;
+      gap: 50px;
+      margin-top: 58px;
+      align-items: stretch;
+    }
+
+    .panel {
+      border: 1px solid rgba(25, 230, 255, 0.28);
+      background: linear-gradient(180deg, rgba(7, 28, 47, 0.82), rgba(2, 9, 18, 0.9));
+      box-shadow: 0 0 34px rgba(25, 230, 255, 0.08);
+      padding: 28px;
+    }
+
+    .panel-title {
+      margin: 0 0 19px;
+      color: var(--cyan);
+      font-size: 22px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    li {
+      position: relative;
+      margin: 0 0 15px;
+      padding-left: 30px;
+      color: #e8f4ff;
+      font-size: 25px;
+      line-height: 1.22;
+      font-weight: 720;
+    }
+
+    li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 11px;
+      height: 11px;
+      background: var(--cyan);
+      box-shadow: 0 0 14px var(--cyan);
+    }
+
+    .green-list li::before {
+      background: var(--green);
+      box-shadow: 0 0 14px var(--green);
+    }
+
+    .small li {
+      font-size: 21px;
+      margin-bottom: 12px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .chip {
+      padding: 11px 15px;
+      border: 1px solid rgba(25, 230, 255, 0.34);
+      background: rgba(3, 14, 26, 0.82);
+      color: #e4faff;
+      font-size: 18px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .big-quote {
+      margin-top: 42px;
+      max-width: 960px;
+      padding: 22px 28px;
+      border-left: 7px solid var(--green);
+      background: rgba(4, 17, 30, 0.78);
+      color: #f0fff9;
+      font-size: 31px;
+      line-height: 1.18;
+      font-weight: 900;
+    }
+
+    .footer {
+      position: absolute;
+      left: 78px;
+      right: 78px;
+      bottom: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: rgba(216, 234, 247, 0.72);
+      font-size: 17px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .hud-card {
+      min-height: 148px;
+      padding: 22px;
+      border: 1px solid rgba(25, 230, 255, 0.28);
+      background: rgba(2, 10, 19, 0.82);
+    }
+
+    .hud-label {
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .hud-value {
+      margin-top: 10px;
+      color: var(--green);
+      font-size: 42px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .hud-text {
+      margin-top: 10px;
+      color: #d7e9f7;
+      font-size: 18px;
+      line-height: 1.24;
+      font-weight: 700;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 28px;
+      margin-top: 42px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 42px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      margin-top: 34px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 14px;
+      margin-top: 44px;
+    }
+
+    .flow.step6 {
+      grid-template-columns: repeat(6, 1fr);
+    }
+
+    .step {
+      position: relative;
+      min-height: 150px;
+      padding: 20px 17px;
+      border: 1px solid rgba(25, 230, 255, 0.35);
+      background: rgba(4, 17, 30, 0.82);
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -14px;
+      width: 24px;
+      height: 2px;
+      background: var(--cyan);
+      box-shadow: 0 0 12px var(--cyan);
+    }
+
+    .step:last-child::after {
+      display: none;
+    }
+
+    .step .tag {
+      color: var(--green);
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 19px;
+      font-weight: 900;
+    }
+
+    .step .name {
+      margin-top: 14px;
+      color: #f3fbff;
+      font-size: 21px;
+      line-height: 1.16;
+      font-weight: 870;
+    }
+
+    .step.risk {
+      border-color: rgba(255, 91, 110, 0.48);
+    }
+
+    .step.risk .tag {
+      color: var(--red);
+    }
+
+    .node-map {
+      display: grid;
+      grid-template-columns: 0.9fr 1.2fr 0.9fr;
+      gap: 24px;
+      margin-top: 36px;
+      align-items: center;
+    }
+
+    .node-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .node {
+      min-height: 78px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      border: 1px solid rgba(25, 230, 255, 0.34);
+      background: rgba(3, 14, 26, 0.84);
+      color: #f3fbff;
+      text-align: center;
+      font-size: 22px;
+      line-height: 1.13;
+      font-weight: 850;
+    }
+
+    .node.core {
+      min-height: 364px;
+      border-color: rgba(36, 246, 168, 0.62);
+      background:
+        radial-gradient(circle at 50% 40%, rgba(36, 246, 168, 0.25), transparent 58%),
+        rgba(3, 14, 26, 0.92);
+      color: #ecfff8;
+      font-size: 37px;
+      text-transform: uppercase;
+      box-shadow: 0 0 44px rgba(36, 246, 168, 0.12);
+    }
+
+    .stack-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 15px;
+      margin-top: 34px;
+    }
+
+    .stack-col {
+      min-height: 360px;
+      padding: 20px 17px;
+      border: 1px solid rgba(25, 230, 255, 0.28);
+      background: rgba(3, 14, 26, 0.78);
+    }
+
+    .stack-col h3 {
+      margin: 0 0 14px;
+      color: var(--cyan);
+      font-size: 20px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .tech-pill {
+      margin: 0 0 10px;
+      padding: 10px 9px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      background: rgba(255, 255, 255, 0.045);
+      color: #e7f5ff;
+      font-size: 17px;
+      line-height: 1.08;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-weight: 800;
+    }
+
+    .brain {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 22px;
+      margin-top: 34px;
+    }
+
+    .brain-card {
+      min-height: 178px;
+      padding: 24px;
+      border: 1px solid rgba(25, 230, 255, 0.3);
+      background: rgba(4, 17, 30, 0.84);
+    }
+
+    .brain-card h3 {
+      margin: 0 0 14px;
+      color: var(--green);
+      font-size: 27px;
+      line-height: 1.05;
+      font-weight: 900;
+    }
+
+    .brain-card p {
+      margin: 0;
+      color: #dbeefa;
+      font-size: 20px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .code-block {
+      margin-top: 32px;
+      padding: 24px 30px;
+      border: 1px solid rgba(36, 246, 168, 0.34);
+      background: rgba(0, 8, 15, 0.88);
+      color: #d8fff3;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 24px;
+      line-height: 1.3;
+      font-weight: 800;
+      white-space: pre-line;
+    }
+
+    .matrix {
+      display: grid;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 0.8fr 1.3fr 1fr;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid rgba(25, 230, 255, 0.2);
+      background: rgba(255, 255, 255, 0.035);
+      color: #e8f4ff;
+      font-size: 19px;
+      line-height: 1.14;
+      font-weight: 740;
+    }
+
+    .row span:first-child {
+      color: var(--cyan);
+      font-weight: 900;
+    }
+
+    .row.head {
+      color: var(--green);
+      background: rgba(36, 246, 168, 0.08);
+      text-transform: uppercase;
+      font-weight: 900;
+    }
+
+    .db-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+      margin-top: 34px;
+    }
+
+    .db {
+      min-height: 110px;
+      padding: 18px;
+      border: 1px solid rgba(25, 230, 255, 0.28);
+      background: rgba(4, 17, 30, 0.82);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #eef9ff;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 20px;
+      line-height: 1.15;
+      font-weight: 850;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-top: 36px;
+    }
+
+    .metric {
+      min-height: 155px;
+      padding: 23px;
+      border: 1px solid rgba(36, 246, 168, 0.36);
+      background: rgba(4, 17, 30, 0.82);
+    }
+
+    .metric .value {
+      color: var(--green);
+      font-size: 50px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .metric .label {
+      margin-top: 12px;
+      color: #dbeefa;
+      font-size: 19px;
+      line-height: 1.2;
+      font-weight: 760;
+    }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-top: 42px;
+    }
+
+    .phase {
+      min-height: 284px;
+      padding: 28px;
+      border: 1px solid rgba(25, 230, 255, 0.32);
+      background: rgba(4, 17, 30, 0.82);
+    }
+
+    .phase h3 {
+      margin: 0 0 16px;
+      color: var(--green);
+      font-size: 33px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .phase p {
+      margin: 0;
+      color: #dceefa;
+      font-size: 23px;
+      line-height: 1.23;
+      font-weight: 720;
+    }
+  </style>
+</head>
+<body>
+  <section class="slide" data-document-role="page" data-label="01 - AgentOS Voz" data-speaker-notes="Abrimos con la idea fuerte: AgentOS Voz no es un chatbot bonito, sino un sistema operativo conversacional para pedidos reales. La estetica futurista acompaña una arquitectura que ya conecta voz, WhatsApp, datos, workflow y facturacion.">
+    <div class="rings"><div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="scanline"></div></div>
+    <div class="top"><div class="kicker">APF 1 - Defensa tecnica</div><div class="num">01 / 12</div></div>
+    <h1>AgentOS Voz</h1>
+    <p class="sub">IA de voz para convertir conversaciones en pedidos reales, auditables y conectados al negocio.</p>
+    <div class="chips">
+      <span class="chip">LLM + tools</span>
+      <span class="chip">Nodos tipo n8n</span>
+      <span class="chip">Telnyx + Deepgram</span>
+      <span class="chip">WhatsApp + SUNAT</span>
+      <span class="chip">FastAPI + Next.js</span>
+    </div>
+    <div class="big-quote">El cliente habla. El agente entiende. El sistema valida. El negocio ejecuta.</div>
+    <div class="hero-grid">
+      <div class="panel">
+        <p class="panel-title">Caso real</p>
+        <ul>
+          <li>El Olivar Grill, restaurante y delivery local en Puente Piedra</li>
+          <li>Atencion por telefono, WhatsApp, chat web, API y panel administrativo</li>
+          <li>Objetivo: automatizar pedidos sin perder control operativo</li>
+        </ul>
+      </div>
+      <div class="grid-2" style="margin-top:0">
+        <div class="hud-card"><div class="hud-label">Canales</div><div class="hud-value">4</div><div class="hud-text">Voz, WhatsApp, chat web y API.</div></div>
+        <div class="hud-card"><div class="hud-label">Core</div><div class="hud-value">1</div><div class="hud-text">Un mismo AgentRuntime para todo.</div></div>
+      </div>
+    </div>
+    <div class="footer"><span>Informe tecnico integral - AgentOS Voz</span><span>Estetica HUD futurista, formato presentacion</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="02 - Del chatbot al agente operativo" data-speaker-notes="Esta diapositiva marca la diferencia central. Un chatbot responde; AgentOS Voz ejecuta procesos con herramientas controladas y reglas de dominio. Esta separacion evita que el LLM invente precios, stock o decisiones contables.">
+    <div class="top"><div class="kicker">Idea fuerza</div><div class="num">02 / 12</div></div>
+    <h2>No es chatbot. Es agente operativo.</h2>
+    <p class="sub">La IA interpreta lenguaje natural, pero la verdad del negocio vive en codigo, datos y transacciones.</p>
+    <div class="grid-2">
+      <div class="panel">
+        <p class="panel-title">Chatbot comun</p>
+        <ul>
+          <li>Contesta texto y puede desviarse</li>
+          <li>No conoce stock real</li>
+          <li>No confirma transacciones</li>
+          <li>No deja auditoria profunda</li>
+          <li>Riesgo de alucinacion operativa</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="panel-title">AgentOS Voz</p>
+        <ul class="green-list">
+          <li>Usa tools autorizadas</li>
+          <li>Consulta catalogo y precios reales</li>
+          <li>Valida stock, delivery y documentos</li>
+          <li>Crea pedidos y workflow runs</li>
+          <li>Registra conversaciones, metricas y auditoria</li>
+        </ul>
+      </div>
+    </div>
+    <div class="code-block">Principio: LLM = interpretacion | Domain Core = verdad operativa | DB transaction = evidencia</div>
+    <div class="footer"><span>Mensaje para jurado</span><span>Innovacion con guardrails, no IA suelta</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="03 - AS-IS y oportunidad" data-speaker-notes="Aqui se conecta con la rubrica: contexto actual, clientes, canales y diagnostico del proceso. El AS-IS es manual y fragil; el TO-BE propone automatizacion trazable.">
+    <div class="top"><div class="kicker">Diagnostico del proceso</div><div class="num">03 / 12</div></div>
+    <h2>El proceso manual pierde ventas y datos</h2>
+    <div class="flow">
+      <div class="step"><div class="tag">01</div><div class="name">Cliente llama o escribe</div></div>
+      <div class="step risk"><div class="tag">02</div><div class="name">Encargado interpreta</div></div>
+      <div class="step risk"><div class="tag">03</div><div class="name">Consulta carta y stock</div></div>
+      <div class="step risk"><div class="tag">04</div><div class="name">Calcula precio</div></div>
+      <div class="step"><div class="tag">05</div><div class="name">Pide datos</div></div>
+      <div class="step"><div class="tag">06</div><div class="name">Confirma pedido</div></div>
+      <div class="step"><div class="tag">07</div><div class="name">Cocina y delivery</div></div>
+    </div>
+    <div class="grid-3">
+      <div class="panel">
+        <p class="panel-title">Dolores</p>
+        <ul class="small">
+          <li>Llamadas perdidas</li>
+          <li>Pedidos mal escuchados</li>
+          <li>Precios inconsistentes</li>
+          <li>Sin trazabilidad clara</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Oportunidad</p>
+        <ul class="small green-list">
+          <li>Atencion continua</li>
+          <li>Datos estructurados</li>
+          <li>Workflow medible</li>
+          <li>Operaciones conectadas</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Madurez digital</p>
+        <div class="hud-value">2/5 -> 4/5</div>
+        <p class="hud-text">De canales digitales sueltos a un proceso automatizado, auditable y parcialmente autonomo.</p>
+      </div>
+    </div>
+    <div class="footer"><span>Rubrica APF 1</span><span>Contexto, AS-IS, problemas, oportunidades y madurez</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="04 - Arquitectura tipo n8n" data-speaker-notes="Esta es una de las diapositivas mas importantes. AgentOS Voz toma la idea de n8n: triggers, condiciones, tools y trazas. Pero la especializa en voz, memoria conversacional, estados de pedido y reglas de restaurante.">
+    <div class="rings" style="right:-170px;top:250px"><div class="ring r1"></div><div class="ring r2"></div></div>
+    <div class="top"><div class="kicker">n8n, pero para voz</div><div class="num">04 / 12</div></div>
+    <h2>Flujos por nodos, tools y auditoria</h2>
+    <p class="sub">El agente no improvisa el negocio: atraviesa nodos controlados que dejan rastro.</p>
+    <div class="flow step6">
+      <div class="step"><div class="tag">Trigger</div><div class="name">Llamada, WhatsApp, chat o API</div></div>
+      <div class="step"><div class="tag">NLU</div><div class="name">AI Router interpreta intencion</div></div>
+      <div class="step"><div class="tag">State</div><div class="name">ConversationState define siguiente dato</div></div>
+      <div class="step"><div class="tag">Condition</div><div class="name">Stock, zona, pago, documento</div></div>
+      <div class="step"><div class="tag">Tool</div><div class="name">Crear pedido, facturar, avisar</div></div>
+      <div class="step"><div class="tag">Audit</div><div class="name">workflow_runs + audit_logs</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <p class="panel-title">Parecido a n8n</p>
+        <ul class="small">
+          <li>Triggers, switches, condiciones y ejecuciones</li>
+          <li>Herramientas acopladas por contrato</li>
+          <li>Historial de runs para auditar decisiones</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Diferencia clave</p>
+        <ul class="small green-list">
+          <li>Especializado en conversaciones de voz</li>
+          <li>Estados como need_address y awaiting_confirmation</li>
+          <li>Control de latencia, silencio, STT/TTS y barge-in</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer"><span>Concepto diferencial</span><span>Workflow engine especializado en agentes conversacionales</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="05 - Cerebro IA" data-speaker-notes="El cerebro del sistema no es un unico modelo. Es una composicion de runtime, router, proveedor LLM, herramientas, dominio y estado conversacional. Esto permite cambiar de proveedor y mantener el negocio estable.">
+    <div class="top"><div class="kicker">Cerebro IA</div><div class="num">05 / 12</div></div>
+    <h2>AgentRuntime + AI Router + Tools</h2>
+    <p class="sub">La inteligencia esta distribuida: entender, decidir, ejecutar y auditar no son la misma cosa.</p>
+    <div class="brain">
+      <div class="brain-card"><h3>AgentRuntime</h3><p>Mantiene conversacion, memoria de turno, datos faltantes, resumen final y cierre del pedido.</p></div>
+      <div class="brain-card"><h3>AI Router</h3><p>Permite usar Gemini, reglas o futuros proveedores bajo un contrato LLMProvider.</p></div>
+      <div class="brain-card"><h3>Tool Registry</h3><p>Expone solo acciones permitidas: buscar productos, validar, crear orden, notificar.</p></div>
+      <div class="brain-card"><h3>Domain Core</h3><p>Resuelve stock, precios, delivery, impuestos, facturacion y estados sin depender del LLM.</p></div>
+      <div class="brain-card"><h3>ConversationState</h3><p>Controla estados como collecting, need_name, need_address, need_payment y closed.</p></div>
+      <div class="brain-card"><h3>Workflow Engine</h3><p>Ejecuta pasos, condiciones y tools con traza para explicar que paso y por que.</p></div>
+    </div>
+    <div class="code-block">AgentRuntime + AI Router + LLMProvider + ToolRegistry + WorkflowEngine + Domain Core + ConversationState</div>
+    <div class="footer"><span>LLM con arquitectura</span><span>La IA entiende; el sistema gobierna</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="06 - LLM y JSON estructurado" data-speaker-notes="Gemini se usa como NLU, no como dueño del negocio. El modelo responde en JSON estructurado para que el runtime lo pueda validar. Si falla o demora, entra un fallback determinista.">
+    <div class="top"><div class="kicker">LLM bajo control</div><div class="num">06 / 12</div></div>
+    <h2>Gemini interpreta, no manda</h2>
+    <div class="grid-2">
+      <div class="panel">
+        <p class="panel-title">Salida esperada</p>
+        <div class="code-block" style="font-size:21px;margin-top:0">{
+  "intent": "order.create",
+  "items": ["1/4 pollo", "gaseosa"],
+  "requested_time": "20:00",
+  "confirms": null,
+  "wants_human": false
+}</div>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Guardrails</p>
+        <ul>
+          <li>temperature = 0 para reducir variabilidad</li>
+          <li>max_output_tokens = 400 para controlar latencia</li>
+          <li>timeout duro de 4 segundos</li>
+          <li>fallback automatico a rule-based NLU</li>
+          <li>detail_answer evita guardar datos incoherentes</li>
+        </ul>
+      </div>
+    </div>
+    <div class="big-quote">Si el producto no existe, no se inventa. Si el stock no alcanza, no confirma. Si faltan datos, pregunta.</div>
+    <div class="footer"><span>IA responsable</span><span>Structured output + fallback + validaciones deterministas</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="07 - Voice Engine" data-speaker-notes="Esta diapositiva muestra la parte mas futurista del proyecto: llamadas reales. Telnyx conecta la telefonia, Deepgram hace STT y TTS, y el bridge habla con el AgentRuntime usando un endpoint compatible con Chat Completions.">
+    <div class="top"><div class="kicker">Voice engine</div><div class="num">07 / 12</div></div>
+    <h2>Telefono real con streaming de voz</h2>
+    <div class="flow step6">
+      <div class="step"><div class="tag">Telnyx</div><div class="name">Media Streaming de llamada</div></div>
+      <div class="step"><div class="tag">Audio</div><div class="name">PCMU / mulaw 8k</div></div>
+      <div class="step"><div class="tag">Deepgram</div><div class="name">STT nova-3 + VAD</div></div>
+      <div class="step"><div class="tag">Proxy</div><div class="name">Chat Completions compatible</div></div>
+      <div class="step"><div class="tag">AgentOS</div><div class="name">Runtime piensa y ejecuta</div></div>
+      <div class="step"><div class="tag">TTS</div><div class="name">aura-2-celeste-es responde</div></div>
+    </div>
+    <div class="grid-3">
+      <div class="panel"><p class="panel-title">Barge-in</p><ul class="small"><li>El cliente puede interrumpir con naturalidad</li><li>La llamada se siente menos robotica</li></ul></div>
+      <div class="panel"><p class="panel-title">Watchdog</p><ul class="small green-list"><li>Corta silencio prolongado</li><li>Evita costos por llamadas abiertas</li></ul></div>
+      <div class="panel"><p class="panel-title">Fallback</p><ul class="small"><li>Si Deepgram no esta listo, Telnyx Call Control responde</li><li>El sistema no queda muerto</li></ul></div>
+    </div>
+    <div class="footer"><span>Telefonia + IA</span><span>STT, TTS, VAD, SSE, barge-in y control de costos</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="08 - Stack tecnologico" data-speaker-notes="Aqui se ve que el proyecto tiene stack completo y serio. No es solo frontend o backend: hay runtime, integraciones, base de datos, telefonia, WhatsApp, facturacion, pruebas e infraestructura.">
+    <div class="top"><div class="kicker">Stack completo</div><div class="num">08 / 12</div></div>
+    <h2>La tecnologia que sostiene el show</h2>
+    <div class="stack-grid">
+      <div class="stack-col"><h3>Backend</h3><div class="tech-pill">Python 3.11+</div><div class="tech-pill">FastAPI</div><div class="tech-pill">Pydantic v2</div><div class="tech-pill">SQLAlchemy async</div><div class="tech-pill">Alembic</div><div class="tech-pill">httpx</div></div>
+      <div class="stack-col"><h3>Frontend</h3><div class="tech-pill">Next.js 15</div><div class="tech-pill">React 19</div><div class="tech-pill">TypeScript</div><div class="tech-pill">Tailwind CSS</div><div class="tech-pill">Server Actions</div><div class="tech-pill">lucide-react</div></div>
+      <div class="stack-col"><h3>IA / Voz</h3><div class="tech-pill">Gemini</div><div class="tech-pill">Rule-based NLU</div><div class="tech-pill">Deepgram</div><div class="tech-pill">Telnyx</div><div class="tech-pill">STT / TTS</div><div class="tech-pill">VAD</div></div>
+      <div class="stack-col"><h3>Datos</h3><div class="tech-pill">PostgreSQL prod</div><div class="tech-pill">SQLite local</div><div class="tech-pill">tenant_id</div><div class="tech-pill">workflow_runs</div><div class="tech-pill">audit_logs</div><div class="tech-pill">voice_metrics</div></div>
+      <div class="stack-col"><h3>WhatsApp</h3><div class="tech-pill">Node.js 20</div><div class="tech-pill">Express</div><div class="tech-pill">Baileys</div><div class="tech-pill">BullMQ</div><div class="tech-pill">Redis</div><div class="tech-pill">Caddy HTTPS</div></div>
+      <div class="stack-col"><h3>Infra</h3><div class="tech-pill">AWS EC2</div><div class="tech-pill">systemd</div><div class="tech-pill">Caddy</div><div class="tech-pill">Let's Encrypt</div><div class="tech-pill">scp deploy</div><div class="tech-pill">Cloud hardening</div></div>
+    </div>
+    <div class="footer"><span>Tecnologias propuestas</span><span>Coherentes con voz, datos, integraciones y SaaS</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="09 - Modelo de datos y reglas" data-speaker-notes="El modelo de datos demuestra que el sistema guarda evidencia real. Las reglas deterministas protegen las decisiones criticas: stock, precios, delivery, documentos, estados y auditoria.">
+    <div class="top"><div class="kicker">Datos + dominio</div><div class="num">09 / 12</div></div>
+    <h2>La verdad vive en la base de datos</h2>
+    <div class="db-grid">
+      <div class="db">tenants</div><div class="db">customers</div><div class="db">products</div><div class="db">inventory</div><div class="db">orders</div>
+      <div class="db">order_items</div><div class="db">conversations</div><div class="db">workflow_runs</div><div class="db">audit_logs</div><div class="db">voice_turn_metrics</div>
+      <div class="db">invoice_series</div><div class="db">invoices</div><div class="db">invoice_items</div><div class="db">tenant_id</div><div class="db">alembic_version</div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <p class="panel-title">Datos locales verificados</p>
+        <ul>
+          <li>139 productos</li>
+          <li>143 pedidos</li>
+          <li>478 clientes</li>
+          <li>653 conversaciones</li>
+          <li>1373 audit logs y 1405 metricas de voz</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="panel-title">Reglas duras</p>
+        <ul class="green-list">
+          <li>Stock atomico con condicion</li>
+          <li>Precio tomado desde DB</li>
+          <li>Delivery validado por zona</li>
+          <li>Factura exige RUC de 11 digitos</li>
+          <li>Estados no saltan arbitrariamente</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer"><span>Modelo transaccional</span><span>Multi-tenant preparado, auditoria y control operativo</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="10 - Operaciones conectadas" data-speaker-notes="Esta diapositiva muestra como una conversacion termina en una operacion completa. WhatsApp y SUNAT se desacoplan para no bloquear la llamada; si fallan, el pedido sigue controlado y registrado.">
+    <div class="top"><div class="kicker">Operaciones conectadas</div><div class="num">10 / 12</div></div>
+    <h2>Pedido, WhatsApp y SUNAT en el mismo flujo</h2>
+    <div class="node-map">
+      <div class="node-stack">
+        <div class="node">Cliente confirma pedido</div>
+        <div class="node">AgentRuntime valida datos faltantes</div>
+        <div class="node">Domain Services aplican reglas</div>
+      </div>
+      <div class="node core">Orden real<br>Stock<br>Factura<br>Notificacion</div>
+      <div class="node-stack">
+        <div class="node">PostgreSQL / SQLite guarda evidencia</div>
+        <div class="node">apisunat.pe emite boleta o factura</div>
+        <div class="node">wsp-service envia WhatsApp por cola</div>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div class="panel"><p class="panel-title">WhatsApp</p><ul class="small"><li>Baileys necesita sesion viva</li><li>BullMQ reintenta avisos</li><li>Idempotencia por orderId + type</li></ul></div>
+      <div class="panel"><p class="panel-title">SUNAT</p><ul class="small green-list"><li>Boleta y factura</li><li>Series B001 / F001</li><li>PDF, XML y CDR</li></ul></div>
+      <div class="panel"><p class="panel-title">Resiliencia</p><ul class="small"><li>Falla externa no tumba pedido</li><li>Background jobs</li><li>Estados auditables</li></ul></div>
+    </div>
+    <div class="footer"><span>Transformacion digital</span><span>De llamada informal a proceso transaccional auditable</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="11 - Fallos reales y soluciones" data-speaker-notes="Una defensa fuerte muestra tambien problemas reales resueltos. Estos fallos demuestran aprendizaje tecnico: latencia del LLM, compatibilidad SSE, encoding del telefono, eventos tardios, ASR imperfecto y concurrencia de stock.">
+    <div class="top"><div class="kicker">Ingenieria real</div><div class="num">11 / 12</div></div>
+    <h2>Fallos pensados, fixes defendibles</h2>
+    <div class="matrix">
+      <div class="row head"><span>Fallo</span><span>Causa</span><span>Solucion</span></div>
+      <div class="row"><span>Gemini tardo 36s</span><span>SDK reintentaba antes de fallar</span><span>Timeout 4s + fallback</span></div>
+      <div class="row"><span>Deepgram FAILED_TO_THINK</span><span>Esperaba SSE y recibia JSON plano</span><span>Endpoint Chat Completions streaming</span></div>
+      <div class="row"><span>Telefono +519 corrupto</span><span>+ sin URL encode</span><span>urllib.parse.quote</span></div>
+      <div class="row"><span>Eventos tardios tras colgar</span><span>Buffers Telnyx/Deepgram despues de hangup</span><span>mark_hung_up / is_hung_up</span></div>
+      <div class="row"><span>Yape -> yate</span><span>Confusion ASR</span><span>Alias fonetico controlado</span></div>
+      <div class="row"><span>Stock concurrente</span><span>Dos pedidos simultaneos</span><span>UPDATE atomico</span></div>
+    </div>
+    <div class="big-quote">Esto ya huele a producto: bugs reales, regresiones cubiertas y decisiones tecnicas con razon.</div>
+    <div class="footer"><span>Calidad tecnica</span><span>Riesgos identificados, mitigados y documentados</span></div>
+  </section>
+
+  <section class="slide" data-document-role="page" data-label="12 - Evidencia y cierre" data-speaker-notes="Cerramos con evidencia, alcance y roadmap. El proyecto cubre la rubrica APF 1 y ademas muestra madurez tecnica por sus pruebas, integraciones y arquitectura. El siguiente paso es endurecer seguridad, backups, CI/CD y observabilidad para escalar como SaaS.">
+    <div class="top"><div class="kicker">Cierre ejecutivo</div><div class="num">12 / 12</div></div>
+    <h2>Grupo preparado: vision, codigo y evidencia</h2>
+    <div class="metrics">
+      <div class="metric"><div class="value">150</div><div class="label">pruebas backend pasan</div></div>
+      <div class="metric"><div class="value">OK</div><div class="label">Ruff limpio e import app.main correcto</div></div>
+      <div class="metric"><div class="value">11</div><div class="label">rutas Next.js generadas/renderizadas</div></div>
+      <div class="metric"><div class="value">11</div><div class="label">pruebas pasan en wsp-service</div></div>
+    </div>
+    <div class="roadmap">
+      <div class="phase"><h3>MVP actual</h3><p>Pedidos por voz, chat y API; WhatsApp; panel; stock; facturacion; auditoria y pruebas.</p></div>
+      <div class="phase"><h3>Hardening</h3><p>Auth/RBAC, backups PostgreSQL, CI/CD, staging, Secrets Manager y observabilidad.</p></div>
+      <div class="phase"><h3>SaaS real</h3><p>Multi-tenant completo, workflow builder visual, RAG/pgvector, POS, CRM, ERP y analytics.</p></div>
+    </div>
+    <div class="big-quote">Mensaje final: IA futurista, pero con arquitectura seria, reglas deterministas y trazabilidad de negocio.</div>
+    <div class="footer"><span>Cobertura APF 1</span><span>Caso, contexto, AS-IS, actores, innovacion, valor, tecnologia y alcance</span></div>
+  </section>
+</body>
+</html>
