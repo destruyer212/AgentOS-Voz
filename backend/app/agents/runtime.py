@@ -1373,8 +1373,18 @@ class AgentRuntime:
                 state, "No te entendí bien. ¿Me repites cuál opción quieres?", "order.clarify", [], tool_calls, None
             )
 
+        # Bug real, visto en vivo: aca ya se pregunto explicitamente "¿X,
+        # si o no?", asi que una respuesta natural con relleno ("Sí, es
+        # ese.", "Sí, quiero eso.") es un SI inequivoco -- pero el chequeo
+        # exigia que el mensaje entero fuera SOLO palabras de confirmacion
+        # (subset), no que contuviera una. Cualquier palabra de mas
+        # ("es", "ese", "quiero", "eso") hacia fallar el match y el agente
+        # repetia la MISMA pregunta de confirmacion en loop, sin salida,
+        # mientras el cliente seguia diciendo que si de formas distintas.
+        # El chequeo de cancelacion de abajo siempre uso interseccion
+        # (basta con que aparezca la palabra) -- este debe ser igual.
         words = set(normalize_text(message).split())
-        if words and words <= CONFIRM_WORDS:
+        if words & CONFIRM_WORDS:
             state.pending_clarification_confirmation = None
             state.pending_clarification = None
             quantity = int(pending_confirmation.get("quantity") or 1)

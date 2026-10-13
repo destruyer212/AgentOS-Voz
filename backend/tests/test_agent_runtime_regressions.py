@@ -912,6 +912,72 @@ async def test_pending_clarification_resolves_by_spoken_price():
 
 
 @pytest.mark.asyncio
+async def test_confirming_pending_clarification_accepts_si_with_extra_words():
+    # Bug real, visto en vivo: tras "Creo que es X. ¿Confirmas, sí o no?",
+    # el cliente contesto "Sí, es ese." / "Sí, quiero eso." (forma natural
+    # con relleno, no solo "si" pelado) -- el chequeo exigia que el
+    # mensaje ENTERO fuera unicamente palabras de confirmacion (subset),
+    # asi que cualquier palabra de mas rompia el match y el agente
+    # repetia la MISMA pregunta de confirmacion en loop infinito, sin
+    # salida, mientras el cliente seguia diciendo que si de formas
+    # distintas. Son los peruanos, hablan con relleno -- "si" tiene que
+    # bastar con que APAREZCA en el mensaje, no que sea el mensaje entero.
+    async with AsyncSessionLocal() as session:
+        runtime = AgentRuntime(session, settings.default_tenant_id)
+        for phrase in (
+            "Sí, es ese.",
+            "Sí, quiero eso.",
+            "Sí, deseo ese.",
+            "si causa quiero ese",
+            "si pe mano ese",
+        ):
+            conversation_id = _conversation_id()
+            try:
+                asked = await runtime.handle_turn(
+                    AgentMessageIn(message="Quiero una hamburguesa", conversation_id=conversation_id)
+                )
+                assert asked.intent == "order.clarify", phrase
+
+                picked = await runtime.handle_turn(
+                    AgentMessageIn(message="B", conversation_id=conversation_id)
+                )
+                assert "confirmas" in picked.response.lower(), phrase
+                state = get_or_create(conversation_id, settings.default_tenant_id)
+                assert state.pending_clarification_confirmation is not None, phrase
+
+                confirmed = await runtime.handle_turn(
+                    AgentMessageIn(message=phrase, conversation_id=conversation_id)
+                )
+                state = get_or_create(conversation_id, settings.default_tenant_id)
+                assert "confirmas" not in confirmed.response.lower(), phrase
+                assert any("hamburguesa" in item.name.lower() for item in state.items), phrase
+                assert state.pending_clarification_confirmation is None, phrase
+            finally:
+                reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_order_strips_peruvian_vocative_filler_from_product_query():
+    # Pedido explicito: "causa", "mano", "pe", "broder" etc. son vocativos
+    # normales en el espanol peruano hablado, no parte del nombre de
+    # ningun plato ("quiero un pollo a la brasa causa"). Sin limpiarlos,
+    # quedaban pegados a la busqueda y el agente los repetia de vuelta en
+    # la pregunta de desambiguacion ("¿Cuál pollo a la brasa causa
+    # prefieres?"), sonando como si no hubiera entendido bien.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="Quiero una hamburguesa causa", conversation_id=conversation_id)
+            )
+            assert turn.intent == "order.clarify"
+            assert "causa" not in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_pending_clarification_resolves_by_last_option():
     # Otro fragmento de la misma llamada: "quiero la ultima opcion que me
     # dijiste" debe resolver contra la lista pendiente, no disparar una

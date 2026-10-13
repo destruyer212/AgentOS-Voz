@@ -136,6 +136,28 @@ _PRODUCT_SEQUENCE_FILLER_WORDS = {
     *_QTY_ALTERNATION.split("|"),
 }
 
+# Vocativos/muletillas comunes en espanol peruano hablado ("causa", "mano",
+# "pe"...) que el cliente agrega sin que formen parte del nombre del
+# producto (ej. "quiero un pollo a la brasa causa", "dame ese webon").
+# Bug real, visto en vivo: sin esto quedaban pegados al nombre buscado y
+# el agente los repetia de vuelta en la pregunta de desambiguacion
+# ("¿Cual pollo a la brasa causa prefieres?"), sonando como si no hubiera
+# entendido bien -- aunque la busqueda igual encontraba el producto (el
+# matching por tokens ya tolera una palabra de mas), el eco quedaba raro.
+_VOCATIVE_FILLER_RE = re.compile(
+    r"\b("
+    r"causa|caus[oa]zo|mano|manito|manita|hermano|hermana|"
+    r"pata|patita|compadre|compa|broder|brother|bro|webon|weon|"
+    r"pe|oe"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_vocative_filler(text: str) -> str:
+    cleaned = _VOCATIVE_FILLER_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
 
 def _parse_quantity(token: str | None) -> int | None:
     if not token:
@@ -424,6 +446,7 @@ def _parse_items(text: str) -> list[ParsedItem]:
 
         rest, note = _extract_note(rest)
         rest = _strip_leading_articles(rest)
+        rest = _strip_vocative_filler(rest)
         if rest and not re.search(r"[0-9a-záéíóúñ]", rest, re.IGNORECASE):
             continue
         if rest and not tokenize(rest):

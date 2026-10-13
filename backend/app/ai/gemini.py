@@ -77,6 +77,10 @@ Reglas:
   Si el cliente dice el tipo generico solo ("una hamburguesa", "una bebida") sin especificar variante, deja
   "query" como ese termino generico tal cual (ej. "hamburguesa") -- el sistema se encarga de preguntar cual
   variante si hay mas de una; no inventes ni asumas tu cual variante es.
+- "query" NUNCA debe incluir vocativos ni muletillas de relleno que el cliente peruano agrega sin que sean
+  parte del nombre del producto (ej. "causa", "mano", "pata", "pe", "broder", "compadre"). "Quiero un pollo a
+  la brasa causa" -> query "pollo a la brasa", NO "pollo a la brasa causa". Esas palabras no describen ningun
+  plato real del catalogo.
 - "action" (default "add") describe que hacer con ese item:
   - "add": el cliente lo quiere agregar al pedido (nuevo o repetir el mismo producto).
   - "increase": el cliente pide MAS cantidad de algo que probablemente YA esta en su pedido (ej. "aumenta las
