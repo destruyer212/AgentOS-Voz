@@ -1139,11 +1139,23 @@ class AgentRuntime:
                 f"Tenemos {readable_categories}. ¿Qué categoría te provoca?"
             )
         else:
-            names = [
-                f"{speakify_product_name(p['name'])} a {_format_money_for_voice(p['price'])}" for p in products[:6]
-            ]
-            intro = f"En {_MENU_CATEGORY_LABELS.get(category, 'esa categoría')} tenemos: "
-            response = intro + ", ".join(names) + ". ¿Qué te provoca?"
+            # Bug real, visto en vivo: esta lista salia sin letras ("Mega
+            # Oferton, Oferton, ... ¿Que te provoca?"), a diferencia de la
+            # desambiguacion de _normalize_items que SI usa Opcion A/B/C/D
+            # y deja pending_clarification armado. El cliente intento
+            # contestar "quisiera la opcion..." pero no habia ninguna
+            # opcion con letra que elegir -- el turno siguiente no tenia
+            # nada deterministico contra que resolver y todo se fue a NLU
+            # libre, que termino interpretando la pregunta de confusion del
+            # cliente como si fuera parte de un pedido. Mismo formato y
+            # mismo pending_clarification que ya usa la desambiguacion de
+            # productos, para que "la B", "la segunda" o el nombre
+            # funcionen igual aca.
+            options = products[:4]
+            option_names = _format_clarification_options(options, limit=4)
+            label = _MENU_CATEGORY_LABELS.get(category, "esa categoría")
+            response = f"En {label} tenemos: {option_names}.{_CLARIFICATION_ANSWER_HINT}"
+            state.pending_clarification = {"query": label, "options": options}
         return await self._finish(state, response, "menu.inquiry", [], tool_calls, None)
 
     def _find_existing_item(self, state: ConversationState, query: str) -> OrderLineDraft | None:

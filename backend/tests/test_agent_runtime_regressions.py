@@ -1582,6 +1582,50 @@ async def test_unrecognized_edit_while_payment_pending_does_not_falsely_confirm_
 
 
 @pytest.mark.asyncio
+async def test_menu_inquiry_offers_lettered_options_and_resolves_answer():
+    # Bug real, visto en vivo en una llamada: "¿Tiene alguna promoción?"
+    # listaba las ofertas SIN letras ("Mega Oferton, Oferton, ... ¿Qué te
+    # provoca?"), a diferencia de la desambiguacion de un item ambiguo (que
+    # SI usa Opcion A/B/C/D y deja pending_clarification armado). El
+    # cliente intento contestar "quisiera la opción..." pero no habia
+    # ninguna opcion con letra que elegir -- sin nada deterministico
+    # contra que resolver, el turno se fue a NLU libre y termino
+    # interpretando mal hasta la pregunta de confusion del cliente ("¿De
+    # qué pedido me hablas?" se busco como si fuera un producto). Ahora el
+    # listado de categoria usa el mismo formato con letras y deja
+    # pending_clarification, para que "la B"/"la segunda"/el nombre
+    # funcionen igual que ya funcionan para un item ambiguo.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="Que bebidas tienen?", conversation_id=conversation_id)
+            )
+            assert asked.intent == "menu.inquiry"
+            assert "Opción A" in asked.response
+            assert "letra" in asked.response.lower()
+
+            # Mismo flujo de dos pasos que ya usa la desambiguacion de items
+            # (ver _pending_resolution_needs_confirmation): resolver por
+            # letra pide confirmar antes de agregar de verdad.
+            answered = await runtime.handle_turn(
+                AgentMessageIn(message="la opción B", conversation_id=conversation_id)
+            )
+            assert answered.intent == "order.clarify"
+            assert "confirmas" in answered.response.lower()
+
+            confirmed = await runtime.handle_turn(
+                AgentMessageIn(message="sí", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert len(state.items) == 1
+            assert confirmed.status != "collecting"
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_payment_answer_with_trailing_no_does_not_cancel_order():
     # Llamada real: "Con Yape, pues" llego como "Con Yape Pesa no". El
     # "no" suelto se leia como cancelacion global y borraba el pedido; por
