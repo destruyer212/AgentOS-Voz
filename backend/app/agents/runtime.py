@@ -1644,7 +1644,7 @@ class AgentRuntime:
             state.requested_time = parsed.requested_time
 
         if parsed.items or parsed.intent in ("order.create", "order.modify"):
-            missing, clarifications, _added = await self._normalize_items(state, parsed.items, tool_calls)
+            missing, clarifications, added = await self._normalize_items(state, parsed.items, tool_calls)
 
             if not state.items:
                 state.status = "collecting"
@@ -1661,16 +1661,24 @@ class AgentRuntime:
                 await self._apply_detail_answer(state, current, parsed.detail_answer.value)
                 return await self._advance_order(state, tool_calls)
 
+            # Bug real, visto en vivo: "Huayrito." (fragmento sin sentido,
+            # probable error de transcripcion del STT) se clasificaba como
+            # order.modify con algo en parsed.items, pero _normalize_items
+            # no agregaba ni reportaba nada real como faltante (tiene varios
+            # "continue" silenciosos, ej. la cola de una aclaracion ya
+            # resuelta en el mismo turno -- ver mas arriba). El chequeo de
+            # aca antes miraba parsed.items (lo que devolvio Gemini, ANTES
+            # de normalizar), no lo que de verdad paso, asi que igual se
+            # decia "Listo, actualicé el pedido" sin ningun cambio real --
+            # confundia al cliente, que no entendia por que el agente decia
+            # eso. Ahora se confirma por nombre lo que SI se agrego (mismo
+            # patron que la rama de arriba, "Agregué X, Y."); si no se
+            # agrego ni se reporto nada como faltante, no se afirma ningun
+            # cambio falso.
             if missing:
                 edit_ack = "No encontré " + "; ".join(missing) + " en el menú. "
-            elif parsed.items:
-                # Solo confirmamos "actualice el pedido" si de verdad se
-                # proceso algun item. Visto en vivo: un fragmento cortado por
-                # el STT ("Tambien quiero agregar", sin nombrar el producto
-                # todavia) clasificaba como order.modify sin items concretos
-                # -- decir "listo, actualice" ahi era falso y confundio al
-                # que llamaba (termino pidiendo un humano sin necesidad).
-                edit_ack = "Listo, actualicé el pedido. "
+            elif added:
+                edit_ack = f"Listo, agregué {', '.join(added)}. "
             else:
                 edit_ack = ""
             return await self._finish(state, edit_ack + pending_prompt, "order.modify", missing, tool_calls, None)

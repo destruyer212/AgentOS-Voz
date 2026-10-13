@@ -1551,6 +1551,37 @@ async def test_can_add_item_while_yape_code_is_pending():
 
 
 @pytest.mark.asyncio
+async def test_unrecognized_edit_while_payment_pending_does_not_falsely_confirm_update():
+    # Bug real, visto en vivo en una llamada: el cliente dijo algo
+    # ininteligible ("Huayrito.", probable error de transcripcion del STT)
+    # justo cuando se le pregunto el metodo de pago. El parser lo tomaba
+    # como un intento de editar el pedido, pero _normalize_items no
+    # agregaba ni reportaba nada real como faltante (tiene "continue"
+    # silenciosos, ej. remover un item que no esta en el carrito) -- el
+    # agente igual decia "Listo, actualicé el pedido", lo cual confundia al
+    # cliente porque nada habia cambiado. "quita la pizza" (nunca pedida)
+    # reproduce el mismo camino de forma determinista con rule_based.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            turn = await runtime.handle_turn(
+                AgentMessageIn(message="quita la pizza", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert turn.status == "need_payment"
+            assert state.payment_method is None
+            assert "actualicé" not in turn.response.lower()
+            assert "agregué" not in turn.response.lower()
+            assert "¿pagas en efectivo" in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_payment_answer_with_trailing_no_does_not_cancel_order():
     # Llamada real: "Con Yape, pues" llego como "Con Yape Pesa no". El
     # "no" suelto se leia como cancelacion global y borraba el pedido; por
