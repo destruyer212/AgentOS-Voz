@@ -161,7 +161,7 @@ class InvoicingService:
             raise InvoicingError("Para emitir boleta con DNI, el DNI debe tener exactamente 8 digitos.")
 
         # legal_name antes que name: cuando el DNI se pudo consultar en
-        # api.apiperu.pe (ver agents/runtime.py, _lookup_document_holder_name)
+        # peruapi.com (ver agents/runtime.py, _lookup_document_holder_name)
         # ahi queda el nombre completo REAL segun RENIEC -- mejor que el
         # nombre informal que el cliente dio por telefono (ej. "Dayana" vs
         # "CASTILLO VELASQUEZ, DAYANNA ARACELI"). Si esa consulta no estaba

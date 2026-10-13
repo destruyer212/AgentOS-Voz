@@ -43,7 +43,7 @@ from app.domain.text_utils import (
 )
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal
-from app.integrations import apiperu_client
+from app.integrations import peruapi_client
 from app.integrations.wsp_notifications import (
     fire_and_forget,
     notify_order_confirmed,
@@ -188,11 +188,11 @@ def _extract_id_number(raw_value: str, expected_length: int) -> str | None:
 
 async def _lookup_document_holder_name(doc_type: str, numero: str, fallback: str) -> str:
     """DNI (doc_type "1") -> nombre completo real (RENIEC); RUC (doc_type
-    "6") -> razon social real (SUNAT) -- via api.apiperu.pe (ver
-    app/integrations/apiperu_client.py). Si la consulta no esta configurada
+    "6") -> razon social real (SUNAT) -- via peruapi.com (ver
+    app/integrations/peruapi_client.py). Si la consulta no esta configurada
     o falla, se usa `fallback` (lo que ya se hacia antes de este lookup)
     para nunca bloquear ni romper el turno por un problema de esa API."""
-    lookup = apiperu_client.lookup_dni if doc_type == "1" else apiperu_client.lookup_ruc
+    lookup = peruapi_client.lookup_dni if doc_type == "1" else peruapi_client.lookup_ruc
     resolved = await lookup(numero)
     return resolved or fallback
 
@@ -1891,8 +1891,8 @@ class AgentRuntime:
                     "No reconocí un RUC válido. Para factura son exactamente 11 dígitos. ¿Me lo repites, o prefieres boleta?"
                 )
                 return
-            # La razon social REAL viene de api.apiperu.pe (ver
-            # _lookup_document_holder_name / apiperu_client.py) -- el
+            # La razon social REAL viene de peruapi.com (ver
+            # _lookup_document_holder_name / peruapi_client.py) -- el
             # fallback de abajo (lo que sobra del mensaje despues de sacar
             # el RUC y palabras de relleno tipicas, o el nombre que ya dio
             # el cliente) solo se usa si esa consulta no esta configurada o
@@ -1946,11 +1946,11 @@ class AgentRuntime:
             payment_part += f", código {state.yape_approval_code}"
         name = state.customer.get("name") if state.customer else None
         name_part = f" A nombre de {name}." if name else ""
-        # El nombre/razon social real (via api.apiperu.pe -- ver
+        # El nombre/razon social real (via peruapi.com -- ver
         # _lookup_document_holder_name) se lee de vuelta ademas del numero,
         # para que el cliente confirme que es la persona/empresa correcta
         # antes de emitir el comprobante -- pedido explicito: "que me
-        # repita mi DNI o mi RUC" debe traer el dato real de apiperu.pe, no
+        # repita mi DNI o mi RUC" debe traer el dato real de peruapi.com, no
         # solo eco de los digitos.
         document_part = ""
         if state.invoice_document_type == "boleta" and state.boleta_dni:

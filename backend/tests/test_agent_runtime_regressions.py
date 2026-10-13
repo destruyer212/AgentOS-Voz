@@ -15,7 +15,7 @@ from app.domain.services import DomainError, OrderService
 from app.infrastructure.config import settings
 from app.infrastructure.db.session import AsyncSessionLocal, init_db
 from app.infrastructure.seed import seed_demo_data
-from app.integrations import apiperu_client
+from app.integrations import peruapi_client
 
 
 @pytest.fixture(autouse=True)
@@ -2277,9 +2277,9 @@ async def test_phone_call_can_add_item_while_waiting_for_boleta_dni():
 
 
 @pytest.mark.asyncio
-async def test_phone_call_dni_uses_apiperu_full_name_when_available(monkeypatch):
-    # Ver app/integrations/apiperu_client.py: cuando la consulta a
-    # api.apiperu.pe funciona, el nombre completo REAL (RENIEC) queda como
+async def test_phone_call_dni_uses_peruapi_full_name_when_available(monkeypatch):
+    # Ver app/integrations/peruapi_client.py: cuando la consulta a
+    # peruapi.com funciona, el nombre completo REAL (RENIEC) queda como
     # legal_name del cliente -- sin importar que nombre haya dado por
     # telefono, la boleta debe usar el dato oficial (ver tambien
     # resolve_cliente en invoicing_services.py, que ahora prioriza
@@ -2288,7 +2288,7 @@ async def test_phone_call_dni_uses_apiperu_full_name_when_available(monkeypatch)
         assert dni == "45678912"
         return "DAYANNA ARACELI CASTILLO VELASQUEZ"
 
-    monkeypatch.setattr(apiperu_client, "lookup_dni", fake_lookup_dni)
+    monkeypatch.setattr(peruapi_client, "lookup_dni", fake_lookup_dni)
 
     conversation_id = _conversation_id()
     try:
@@ -2305,19 +2305,19 @@ async def test_phone_call_dni_uses_apiperu_full_name_when_available(monkeypatch)
             assert state.customer["legal_name"] == "DAYANNA ARACELI CASTILLO VELASQUEZ"
             assert state.boleta_dni_name == "DAYANNA ARACELI CASTILLO VELASQUEZ"
             # Pedido explicito: cuando confirma el DNI de vuelta, tiene que
-            # decir el nombre real que trajo apiperu.pe, no solo el numero.
+            # decir el nombre real que trajo peruapi.com, no solo el numero.
             assert "DAYANNA ARACELI CASTILLO VELASQUEZ" in turn.response
     finally:
         reset(conversation_id)
 
 
 @pytest.mark.asyncio
-async def test_phone_call_ruc_uses_apiperu_razon_social_when_available(monkeypatch):
+async def test_phone_call_ruc_uses_peruapi_razon_social_when_available(monkeypatch):
     async def fake_lookup_ruc(ruc):
         assert ruc == "20563398761"
         return "EL OLIVAR GRILL E.I.R.L."
 
-    monkeypatch.setattr(apiperu_client, "lookup_ruc", fake_lookup_ruc)
+    monkeypatch.setattr(peruapi_client, "lookup_ruc", fake_lookup_ruc)
 
     conversation_id = _conversation_id()
     try:
@@ -2337,7 +2337,7 @@ async def test_phone_call_ruc_uses_apiperu_razon_social_when_available(monkeypat
             assert state.factura_razon_social == "EL OLIVAR GRILL E.I.R.L."
             assert state.customer["legal_name"] == "EL OLIVAR GRILL E.I.R.L."
             # Pedido explicito: cuando confirma el RUC de vuelta, tiene que
-            # decir la razon social real que trajo apiperu.pe, no solo el
+            # decir la razon social real que trajo peruapi.com, no solo el
             # numero de RUC.
             assert "EL OLIVAR GRILL E.I.R.L." in turn.response
     finally:
@@ -2345,8 +2345,8 @@ async def test_phone_call_ruc_uses_apiperu_razon_social_when_available(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_phone_call_ruc_falls_back_to_spoken_guess_when_apiperu_unavailable(monkeypatch):
-    # Sin token configurado (o con la API caida), apiperu_client.lookup_ruc
+async def test_phone_call_ruc_falls_back_to_spoken_guess_when_peruapi_unavailable(monkeypatch):
+    # Sin token configurado (o con la API caida), peruapi_client.lookup_ruc
     # ya devuelve None por su cuenta -- este test confirma que el flujo
     # entero sigue funcionando con el fallback de siempre (nombre que ya
     # dio el cliente) en vez de trabarse o dejar la factura sin razon
@@ -2354,7 +2354,7 @@ async def test_phone_call_ruc_falls_back_to_spoken_guess_when_apiperu_unavailabl
     async def fake_lookup_ruc(ruc):
         return None
 
-    monkeypatch.setattr(apiperu_client, "lookup_ruc", fake_lookup_ruc)
+    monkeypatch.setattr(peruapi_client, "lookup_ruc", fake_lookup_ruc)
 
     conversation_id = _conversation_id()
     try:
