@@ -69,17 +69,19 @@ async def test_scenario_happy_path_delivery_yape():
                 "delivery",
                 "Av Los Pinos 456, Comas",
                 "yape",
+                "123",
                 "si, confirmo",
             ],
         )
         assert [t.status for t in turns] == [
             "need_name", "need_fulfillment", "need_address", "need_payment",
-            "awaiting_confirmation", "closed",
+            "need_yape_code", "awaiting_confirmation", "closed",
         ]
         final = turns[-1]
         assert final.order is not None
         assert final.order.status == "confirmed" or final.order.status == "scheduled"
         assert final.order.payment_method == "yape"
+        assert final.order.payment_reference == "123"
         assert final.order.fulfillment_type == "delivery"
         # "Delivery" (cobro del motorizado) se agrega solo en pedidos por
         # delivery -- ver AgentRuntime._confirm_order.

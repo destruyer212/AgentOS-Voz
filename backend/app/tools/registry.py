@@ -90,6 +90,7 @@ class ToolRegistry:
             fulfillment_type=arguments.get("fulfillment_type"),
             delivery_address=arguments.get("delivery_address"),
             payment_method=arguments.get("payment_method"),
+            payment_reference=arguments.get("payment_reference"),
             items=[OrderItemIn(**item) for item in arguments.get("items", [])],
         )
         order = await OrderService(self.session, self.tenant_id).create_confirmed_order(data)

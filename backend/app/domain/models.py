@@ -90,6 +90,12 @@ class Order(Base, TenantScopedMixin, TimestampMixin):
     fulfillment_type: Mapped[str | None] = mapped_column(String(20))  # delivery | pickup
     delivery_address: Mapped[str | None] = mapped_column(String(240))
     payment_method: Mapped[str | None] = mapped_column(String(20))  # efectivo | yape | plin | tarjeta
+    # Codigo de aprobacion "ficticio" de Yape (ver agents/runtime.py,
+    # _DETAIL_PROMPTS["yape_code"]) -- solo se llena cuando payment_method
+    # == "yape". No se verifica contra ninguna API real de Yape (no la
+    # tenemos integrada); se guarda tal cual para que el negocio lo cruce
+    # a mano contra su propio Yape.
+    payment_reference: Mapped[str | None] = mapped_column(String(20))
     # --- Aviso de WhatsApp (ver app/agents/runtime.py, _issue_invoice_and_notify) ---
     # "sent" | "failed" | "skipped_not_configured" | "skipped_no_phone". None
     # = todavia no se intento (pedido recien creado, el aviso corre en

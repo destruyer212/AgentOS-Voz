@@ -426,7 +426,7 @@ async def test_cancel_clears_order_details_before_next_order():
                 await runtime.handle_turn(
                     AgentMessageIn(message="yape", conversation_id=conversation_id)
                 )
-            ).status == "awaiting_confirmation"
+            ).status == "need_yape_code"
 
             cancelled = await runtime.handle_turn(
                 AgentMessageIn(message="no gracias", conversation_id=conversation_id)
@@ -439,6 +439,7 @@ async def test_cancel_clears_order_details_before_next_order():
             assert state.fulfillment_type is None
             assert state.delivery_address is None
             assert state.payment_method is None
+            assert state.yape_approval_code is None
 
             next_order = await runtime.handle_turn(
                 AgentMessageIn(message="Quiero una Inca Kola", conversation_id=conversation_id)
@@ -1110,7 +1111,8 @@ async def test_yape_answer_does_not_double_pending_order_quantity():
             )
             state = get_or_create(conversation_id, settings.default_tenant_id)
             assert [item.quantity for item in state.items] == [1]
-            assert "1 Hamburguesa Vegetariana" in turn.response
+            assert state.payment_method == "yape"
+            assert "código de aprobación" in turn.response.lower()
     finally:
         reset(conversation_id)
 
@@ -1364,6 +1366,126 @@ async def test_yape_misheard_as_yate_still_resolves_as_payment():
 
 
 @pytest.mark.asyncio
+async def test_yape_asks_for_approval_code_and_says_pago_concretado():
+    # Codigo de aprobacion "ficticio" de Yape: no se verifica contra
+    # ninguna API real, pero se pide, se valida el formato (3 digitos) y
+    # se responde con confianza ("Listo, pago concretado.") para que se
+    # sienta igual de serio que pedir el DNI.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            asked = await runtime.handle_turn(
+                AgentMessageIn(message="Yape", conversation_id=conversation_id)
+            )
+            assert asked.status == "need_yape_code"
+            assert "código de aprobación" in asked.response.lower()
+            assert "3 dígitos" in asked.response
+
+            given = await runtime.handle_turn(
+                AgentMessageIn(message="123", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.yape_approval_code == "123"
+            assert given.response.startswith("Listo, pago concretado.")
+            assert "código 123" in given.response
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_yape_approval_code_accepts_spoken_digits():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local", "yape"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            given = await runtime.handle_turn(
+                AgentMessageIn(message="Siete cuatro dos.", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.yape_approval_code == "742"
+            assert given.response.startswith("Listo, pago concretado.")
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_yape_approval_code_rejects_wrong_length_and_repeats_question():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local", "yape"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            rejected = await runtime.handle_turn(
+                AgentMessageIn(message="1234", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert rejected.status == "need_yape_code"
+            assert state.yape_approval_code is None
+            assert "no reconocí" in rejected.response.lower()
+            assert not rejected.response.startswith("Listo, pago concretado.")
+
+            given = await runtime.handle_turn(
+                AgentMessageIn(message="456", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.yape_approval_code == "456"
+            assert given.response.startswith("Listo, pago concretado.")
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_efectivo_and_tarjeta_never_ask_for_yape_code():
+    for payment in ("efectivo", "tarjeta"):
+        conversation_id = _conversation_id()
+        try:
+            async with AsyncSessionLocal() as session:
+                runtime = AgentRuntime(session, settings.default_tenant_id)
+                for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                    await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=payment, conversation_id=conversation_id)
+                )
+                assert turn.status != "need_yape_code"
+                state = get_or_create(conversation_id, settings.default_tenant_id)
+                assert state.yape_approval_code is None
+        finally:
+            reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_can_add_item_while_yape_code_is_pending():
+    # Mismo espiritu que el fix de boleta/factura: si el cliente agrega
+    # algo al pedido justo cuando se le pide el codigo de Yape (sin dar
+    # ningun digito), se edita el pedido y se vuelve a pedir el codigo, en
+    # vez de perder el item o inventar un codigo invalido.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local", "yape"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            edited = await runtime.handle_turn(
+                AgentMessageIn(message="Coca Kola", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert edited.status == "need_yape_code"
+            assert any("coca" in item.name.lower() for item in state.items)
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_payment_answer_with_trailing_no_does_not_cancel_order():
     # Llamada real: "Con Yape, pues" llego como "Con Yape Pesa no". El
     # "no" suelto se leia como cancelacion global y borraba el pedido; por
@@ -1385,7 +1507,7 @@ async def test_payment_answer_with_trailing_no_does_not_cancel_order():
                 AgentMessageIn(message="Con Yape Pesa no.", conversation_id=conversation_id, channel="phone")
             )
             state = get_or_create(conversation_id, settings.default_tenant_id)
-            assert turn.status == "need_document"
+            assert turn.status == "need_yape_code"
             assert state.payment_method == "yape"
             assert [item.name for item in state.items] == ["Hamburguesa Clasica"]
             assert "cancelado" not in turn.response.lower()

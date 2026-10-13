@@ -25,6 +25,7 @@ RESTAURANT_ORDER_FULFILLMENT = WorkflowDefinition(
                 "fulfillment_type": "fulfillment_type",
                 "delivery_address": "delivery_address",
                 "payment_method": "payment_method",
+                "payment_reference": "payment_reference",
                 "items": "items",
             },
             output_key="order_result",

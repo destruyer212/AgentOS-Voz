@@ -46,6 +46,13 @@ class ConversationState:
     fulfillment_type: str | None = None  # delivery | pickup
     delivery_address: str | None = None
     payment_method: str | None = None  # efectivo | yape | plin | tarjeta
+    # Codigo de aprobacion "ficticio" de Yape (ver agents/runtime.py,
+    # _DETAIL_PROMPTS["yape_code"]): solo se pide cuando payment_method ==
+    # "yape". No se verifica contra ninguna API real de Yape (no esta
+    # integrada) -- se valida el formato (3 digitos exactos) y se guarda
+    # para que el negocio lo cruce a mano contra su propio Yape.
+    yape_approval_code: str | None = None
+    pending_yape_code_rejection_message: str | None = None
     # Observabilidad (ver VoiceTurnMetric en domain/models.py): timestamp de
     # inicio del turno en curso, para medir cuanto tarda AgentRuntime en
     # responder -- el tramo que si controlamos (Deepgram/Telnyx no exponen

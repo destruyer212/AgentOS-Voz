@@ -345,6 +345,7 @@ class OrderService:
             fulfillment_type=data.fulfillment_type,
             delivery_address=data.delivery_address,
             payment_method=data.payment_method,
+            payment_reference=data.payment_reference,
             total=round(total, 2),
             source="agent",
         )
@@ -531,6 +532,7 @@ class OrderService:
             fulfillment_type=order.fulfillment_type,
             delivery_address=order.delivery_address,
             payment_method=order.payment_method,
+            payment_reference=order.payment_reference,
             total=order.total,
             whatsapp_status=order.whatsapp_status,
             whatsapp_sent_at=order.whatsapp_sent_at,

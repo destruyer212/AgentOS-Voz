@@ -52,6 +52,10 @@ export interface OrderOut {
   fulfillment_type: "delivery" | "pickup" | string | null;
   delivery_address: string | null;
   payment_method: "efectivo" | "yape" | "plin" | "tarjeta" | string | null;
+  // Codigo de aprobacion "ficticio" de Yape (ver backend/app/agents/runtime.py,
+  // _DETAIL_PROMPTS["yape_code"]) -- solo presente cuando payment_method
+  // es "yape". No esta verificado contra ninguna API real de Yape.
+  payment_reference: string | null;
   total: number;
   // Aviso de WhatsApp real (ver app/integrations/wsp_notifications.py) --
   // null mientras el aviso todavia no se intento (corre en paralelo fuera

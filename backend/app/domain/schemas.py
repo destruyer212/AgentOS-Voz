@@ -62,6 +62,10 @@ class OrderCreate(BaseModel):
     fulfillment_type: str | None = None
     delivery_address: str | None = None
     payment_method: str | None = None
+    # Codigo de aprobacion "ficticio" de Yape (ver agents/runtime.py,
+    # _DETAIL_PROMPTS["yape_code"]) -- no se verifica contra ninguna API
+    # real de Yape, solo se guarda para que el negocio lo cruce a mano.
+    payment_reference: str | None = None
     items: list[OrderItemIn]
 
 
@@ -83,6 +87,7 @@ class OrderOut(BaseModel):
     fulfillment_type: str | None = None
     delivery_address: str | None = None
     payment_method: str | None = None
+    payment_reference: str | None = None
     total: float
     # --- Aviso de WhatsApp (ver app/integrations/wsp_notifications.py) ---
     whatsapp_status: str | None = None  # sent | failed | skipped_not_configured | skipped_no_phone

@@ -127,6 +127,7 @@ function OrderDetail({ order }: { order: OrderOut }) {
           {order.payment_method && (
             <p className="flex items-center gap-1.5">
               <Wallet size={12} className="text-hud-400" /> {paymentMethodLabel(order.payment_method)}
+              {order.payment_reference && ` · código ${order.payment_reference}`}
             </p>
           )}
           {order.requested_time && (

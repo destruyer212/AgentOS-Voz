@@ -62,6 +62,7 @@ _DETAIL_STATUSES = (
     "need_fulfillment",
     "need_address",
     "need_payment",
+    "need_yape_code",
     "need_document",
     "need_dni",
     "need_ruc",
@@ -72,6 +73,15 @@ _DETAIL_PROMPTS = {
     "fulfillment": "¿Lo recoges tú en el local o te lo llevamos por delivery?",
     "address": "¿Cuál es la dirección de entrega?",
     "payment": "¿Pagas en efectivo, Yape o tarjeta?",
+    # Pedido explicito: "codigo de aprobacion" de Yape (el codigo de
+    # seguridad de 3 digitos que Yape le muestra a quien paga Y a quien
+    # recibe, pensado para frenar "yapeos falsos"). Aca NO se verifica
+    # contra ninguna API real de Yape -- solo se valida el formato (3
+    # digitos) y se guarda, para que el negocio lo cruce a mano contra su
+    # propio Yape. A proposito se responde como si fuera una verificacion
+    # real (ver "Listo, pago concretado." en _advance_order) para que la
+    # llamada se sienta igual de seria que pedir el DNI.
+    "yape_code": "Perfecto, pagas con Yape. ¿Me dictas el código de aprobación? Son 3 dígitos.",
     "document": "¿Quieres boleta o factura?",
     "dni": "Perfecto, para la boleta me dictas tu DNI, por favor. Son 8 dígitos.",
     "ruc": "Perfecto, ¿me dictas el RUC de tu empresa? Son 11 dígitos.",
@@ -154,14 +164,20 @@ def _spoken_digit_groups(text: str) -> str:
 
 
 def _extract_id_number(raw_value: str, expected_length: int) -> str | None:
-    """DNI (8 digitos) o RUC (11 digitos) desde una respuesta hablada.
-    Primero intenta el caso simple (el STT ya entrego digitos seguidos);
-    si no calza, intenta reconstruir el numero a partir de palabras
-    habladas (ver _spoken_digit_groups). None si ninguna de las dos formas
-    da exactamente la cantidad de digitos esperada -- nunca se acepta un
-    numero mas largo o mas corto solo porque "se parece"."""
-    direct = _DNI_RE if expected_length == 8 else _RUC_RE
-    match = direct.search(raw_value)
+    """DNI (8 digitos), RUC (11) o codigo de aprobacion de Yape (3) desde
+    una respuesta hablada. Primero intenta el caso simple (el STT ya
+    entrego digitos seguidos); si no calza, intenta reconstruir el numero
+    a partir de palabras habladas (ver _spoken_digit_groups). None si
+    ninguna de las dos formas da exactamente la cantidad de digitos
+    esperada -- nunca se acepta un numero mas largo o mas corto solo
+    porque "se parece".
+
+    Bug real: esto antes solo sabia armar el patron para 8 u 11 digitos
+    (_DNI_RE/_RUC_RE) -- para cualquier otro largo (ej. el codigo de Yape
+    de 3 digitos), si Deepgram transcribia los digitos seguidos ("123" en
+    vez de "uno dos tres"), nunca se reconocian por este camino. El patron
+    ahora se arma dinamico para el largo pedido."""
+    match = re.search(rf"(?<!\d)(\d{{{expected_length}}})(?!\d)", raw_value)
     if match:
         return match.group(1)
     spoken = _spoken_digit_groups(raw_value)
@@ -661,6 +677,8 @@ def _reset_order_draft(state: ConversationState) -> None:
     state.fulfillment_type = None
     state.delivery_address = None
     state.payment_method = None
+    state.yape_approval_code = None
+    state.pending_yape_code_rejection_message = None
     state.silence_retries = 0
     state.pending_clarification = None
     state.pending_clarification_confirmation = None
@@ -1391,6 +1409,11 @@ class AgentRuntime:
             return "address"
         if not state.payment_method:
             return "payment"
+        # Codigo de aprobacion "ficticio" de Yape -- ver _DETAIL_PROMPTS
+        # ["yape_code"]: solo se pide si pago es Yape, nunca para
+        # efectivo/tarjeta.
+        if state.payment_method == "yape" and not state.yape_approval_code:
+            return "yape_code"
         if state.channel == "phone" and not state.invoice_document_type:
             return "document"
         # El DNI obligatorio de la boleta es solo para voz (ver
@@ -1410,6 +1433,16 @@ class AgentRuntime:
         """Una vez que los items del pedido estan completos, pide los datos
         que falten (nombre, delivery/recojo, direccion, forma de pago) antes
         de pasar al resumen final. Un dato a la vez, en orden fijo."""
+        # "Listo, pago concretado." -- ver _DETAIL_PROMPTS["yape_code"]: se
+        # antepone a lo que sea que venga despues, UNA sola vez, justo
+        # cuando el codigo de Yape se acaba de capturar bien (nunca si hubo
+        # que rechazarlo y pedirlo de nuevo -- ahi gana el mensaje de
+        # rechazo de abajo).
+        confirm_yape_prefix = (
+            "Listo, pago concretado. "
+            if state.status == "need_yape_code" and not state.pending_yape_code_rejection_message
+            else ""
+        )
         missing_detail = self._next_missing_detail(state)
         if missing_detail:
             state.status = f"need_{missing_detail}"
@@ -1422,10 +1455,14 @@ class AgentRuntime:
                 prompt = state.pending_dni_rejection_message
             elif missing_detail == "ruc" and state.pending_ruc_rejection_message:
                 prompt = state.pending_ruc_rejection_message
-            return await self._finish(state, prompt, "order.create", [], tool_calls, None)
+            elif missing_detail == "yape_code" and state.pending_yape_code_rejection_message:
+                prompt = state.pending_yape_code_rejection_message
+            return await self._finish(state, f"{confirm_yape_prefix}{prompt}", "order.create", [], tool_calls, None)
         state.status = "awaiting_confirmation"
         self._maybe_send_review_link(state)
-        return await self._finish(state, self._build_summary(state), "order.create", [], tool_calls, None)
+        return await self._finish(
+            state, f"{confirm_yape_prefix}{self._build_summary(state)}", "order.create", [], tool_calls, None
+        )
 
     @staticmethod
     def _maybe_send_review_link(state: ConversationState) -> None:
@@ -1527,6 +1564,18 @@ class AgentRuntime:
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
+        # Codigo de aprobacion de Yape: mismo criterio que arriba -- si el
+        # turno trae digitos (seguidos o hablados), es un intento de dar el
+        # codigo, se procesa directo. Si no trae ningun digito, puede ser
+        # que el cliente este agregando algo al pedido ("tambien quiero una
+        # Coca Kola") -- se deja caer al flujo normal de abajo para no
+        # perder el item, igual que con boleta/factura/DNI/RUC.
+        if current == "need_yape_code" and (
+            bool(re.search(r"\d", message)) or len(_spoken_digit_groups(message)) >= 1
+        ):
+            await self._apply_detail_answer(state, current, message)
+            return await self._advance_order(state, tool_calls)
+
         # Ruta ultrarrapida y segura: fulfillment/pago son vocabularios
         # cerrados. Si calzan directo, no llamamos a Gemini.
         if current == "need_fulfillment":
@@ -1609,7 +1658,7 @@ class AgentRuntime:
             await self._apply_detail_answer(state, current, parsed.detail_answer.value)
             return await self._advance_order(state, tool_calls)
 
-        if current in {"need_document", "need_dni", "need_ruc"}:
+        if current in {"need_document", "need_dni", "need_ruc", "need_yape_code"}:
             await self._apply_detail_answer(state, current, message)
             return await self._advance_order(state, tool_calls)
 
@@ -1717,6 +1766,28 @@ class AgentRuntime:
             if value not in {"efectivo", "yape", "plin", "tarjeta"}:
                 return
             state.payment_method = value
+            # Si se arrepintio y cambio de Yape a otra cosa, el codigo ya
+            # no aplica -- mismo motivo que factura_ruc se limpia al volver
+            # a boleta.
+            if value != "yape":
+                state.yape_approval_code = None
+                state.pending_yape_code_rejection_message = None
+            return
+
+        if current == "need_yape_code":
+            # Codigo de aprobacion "ficticio" de Yape -- ver
+            # _DETAIL_PROMPTS["yape_code"]: no se verifica contra ninguna
+            # API real de Yape (no la tenemos integrada), solo se valida el
+            # formato (3 digitos exactos, igual de estricto que el DNI/RUC)
+            # y se guarda para que el negocio lo cruce a mano.
+            code = _extract_id_number(raw_value, 3)
+            if not code:
+                state.pending_yape_code_rejection_message = (
+                    "No reconocí el código. Son 3 dígitos, ¿me lo repites?"
+                )
+                return
+            state.yape_approval_code = code
+            state.pending_yape_code_rejection_message = None
             return
 
         if current == "need_document":
@@ -1871,6 +1942,8 @@ class AgentRuntime:
             place_part = ""
 
         payment_part = f", pagas con {state.payment_method}" if state.payment_method else ""
+        if state.payment_method == "yape" and state.yape_approval_code:
+            payment_part += f", código {state.yape_approval_code}"
         name = state.customer.get("name") if state.customer else None
         name_part = f" A nombre de {name}." if name else ""
         # El nombre/razon social real (via api.apiperu.pe -- ver
@@ -1932,6 +2005,7 @@ class AgentRuntime:
             "fulfillment_type": state.fulfillment_type,
             "delivery_address": state.delivery_address,
             "payment_method": state.payment_method,
+            "payment_reference": state.yape_approval_code,
             "channel": "whatsapp",  # canal de la notificacion de confirmacion, no el de la conversacion
             "items": items_context,
         }
