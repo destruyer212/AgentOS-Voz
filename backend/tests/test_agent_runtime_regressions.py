@@ -1463,6 +1463,71 @@ async def test_efectivo_and_tarjeta_never_ask_for_yape_code():
 
 
 @pytest.mark.asyncio
+async def test_tarjeta_confirms_payment_with_registered_card_no_code_asked():
+    # Mismo espiritu "ficticio pero que se vea real" que el codigo de Yape,
+    # pero sin paso extra: la idea de negocio es que el cliente ya
+    # "activo" una tarjeta predeterminada en una visita anterior al local,
+    # asi que el agente nunca pide un numero de tarjeta por telefono --
+    # simplemente confirma el cobro con la tarjeta ya registrada apenas el
+    # cliente dice "tarjeta".
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local"):
+                await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+
+            given = await runtime.handle_turn(
+                AgentMessageIn(message="tarjeta", conversation_id=conversation_id)
+            )
+            state = get_or_create(conversation_id, settings.default_tenant_id)
+            assert state.payment_method == "tarjeta"
+            assert given.status != "need_yape_code"
+            assert given.response.startswith("Listo, pago concretado con tu tarjeta registrada.")
+            assert "numero" not in given.response.lower() and "número" not in given.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_tarjeta_prefix_appears_once_not_on_every_later_turn():
+    # El prefijo "Listo, pago concretado..." solo debe salir UNA vez, justo
+    # cuando se elige tarjeta -- no debe repetirse en preguntas
+    # posteriores (ej. boleta/factura) como paso con el codigo de Yape.
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "recojo en el local", "tarjeta"):
+                turn = await runtime.handle_turn(
+                    AgentMessageIn(message=message, conversation_id=conversation_id, channel="phone")
+                )
+            assert turn.response.startswith("Listo, pago concretado con tu tarjeta registrada.")
+
+            next_turn = await runtime.handle_turn(
+                AgentMessageIn(message="boleta", conversation_id=conversation_id, channel="phone")
+            )
+            assert "pago concretado" not in next_turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
+async def test_tarjeta_summary_mentions_registered_card():
+    conversation_id = _conversation_id()
+    try:
+        async with AsyncSessionLocal() as session:
+            runtime = AgentRuntime(session, settings.default_tenant_id)
+            turn = None
+            for message in ("Quiero una hamburguesa clasica", "Carlos", "en el local", "tarjeta"):
+                turn = await runtime.handle_turn(AgentMessageIn(message=message, conversation_id=conversation_id))
+            assert turn.status == "awaiting_confirmation"
+            assert "tarjeta registrada" in turn.response.lower()
+    finally:
+        reset(conversation_id)
+
+
+@pytest.mark.asyncio
 async def test_can_add_item_while_yape_code_is_pending():
     # Mismo espiritu que el fix de boleta/factura: si el cliente agrega
     # algo al pedido justo cuando se le pide el codigo de Yape (sin dar

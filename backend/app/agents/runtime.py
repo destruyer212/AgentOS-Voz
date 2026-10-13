@@ -1443,6 +1443,20 @@ class AgentRuntime:
             if state.status == "need_yape_code" and not state.pending_yape_code_rejection_message
             else ""
         )
+        # Pago con tarjeta: a diferencia de Yape, no hay un codigo que pedir
+        # por telefono (nunca se recolecta un numero de tarjeta por voz) --
+        # la idea de negocio es que el cliente ya "activo" una tarjeta
+        # predeterminada en una visita anterior al local, y aca el agente
+        # simplemente actua como si el sistema ya la tuviera registrada y
+        # ya hubiera cobrado con ella. Dispara una sola vez, justo cuando
+        # el pago se acaba de elegir como tarjeta (state.status todavia es
+        # "need_payment" en este punto, antes de que avance al siguiente
+        # dato faltante).
+        confirm_tarjeta_prefix = (
+            "Listo, pago concretado con tu tarjeta registrada. "
+            if state.status == "need_payment" and state.payment_method == "tarjeta"
+            else ""
+        )
         missing_detail = self._next_missing_detail(state)
         if missing_detail:
             state.status = f"need_{missing_detail}"
@@ -1457,11 +1471,18 @@ class AgentRuntime:
                 prompt = state.pending_ruc_rejection_message
             elif missing_detail == "yape_code" and state.pending_yape_code_rejection_message:
                 prompt = state.pending_yape_code_rejection_message
-            return await self._finish(state, f"{confirm_yape_prefix}{prompt}", "order.create", [], tool_calls, None)
+            return await self._finish(
+                state, f"{confirm_yape_prefix}{confirm_tarjeta_prefix}{prompt}", "order.create", [], tool_calls, None
+            )
         state.status = "awaiting_confirmation"
         self._maybe_send_review_link(state)
         return await self._finish(
-            state, f"{confirm_yape_prefix}{self._build_summary(state)}", "order.create", [], tool_calls, None
+            state,
+            f"{confirm_yape_prefix}{confirm_tarjeta_prefix}{self._build_summary(state)}",
+            "order.create",
+            [],
+            tool_calls,
+            None,
         )
 
     @staticmethod
@@ -1944,6 +1965,12 @@ class AgentRuntime:
         payment_part = f", pagas con {state.payment_method}" if state.payment_method else ""
         if state.payment_method == "yape" and state.yape_approval_code:
             payment_part += f", código {state.yape_approval_code}"
+        elif state.payment_method == "tarjeta":
+            # Mismo espiritu que el codigo de Yape de arriba: el cliente ya
+            # "activo" una tarjeta predeterminada en una visita anterior al
+            # local, asi que el resumen hablado lo confirma como un hecho
+            # ya resuelto, no como algo pendiente de verificar.
+            payment_part = ", pagas con tu tarjeta registrada"
         name = state.customer.get("name") if state.customer else None
         name_part = f" A nombre de {name}." if name else ""
         # El nombre/razon social real (via peruapi.com -- ver
