@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestRegressor
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -25,7 +26,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.preprocessing import PolynomialFeatures
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
@@ -46,27 +47,17 @@ def _load_calls(dataset: Path) -> list[dict[str, str]]:
 
 def run_experiment(output: Path | None = None, dataset: Path = DEFAULT_OUTPUT) -> dict:
     rows = _load_calls(dataset)
-    categories = {name: sorted({row[name] for row in rows}) for name in ("canal", "tipo_entrega")}
-    x_cls = np.array([
-        [
-            int(row["duracion_segundos"]), int(row["intentos_aclaracion"]),
-            int(row["items_solicitados"]), int(row["items_distintos"]),
-            float(row["subtotal_soles"]),
-            *(1.0 if row["canal"] == value else 0.0 for value in categories["canal"]),
-            *(1.0 if row["tipo_entrega"] == value else 0.0 for value in categories["tipo_entrega"]),
-        ] for row in rows
-    ], dtype=float)
-    y_cls = np.array([int(row["pedido_confirmado"]) for row in rows])
+    x_cls = np.array([row["mensaje_cliente"] for row in rows])
+    y_cls = np.array([int(row["requiere_aclaracion"]) for row in rows])
     x_train, x_test, y_train, y_test = train_test_split(
         x_cls, y_cls, test_size=0.25, stratify=y_cls, random_state=SEED,
     )
     classifiers = {
-        "Regresion logistica": make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, C=1.0)),
-        "SVM RBF": make_pipeline(StandardScaler(), SVC(C=1.0, random_state=SEED)),
-        "KNN (k=7)": make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=7)),
-        "Arbol de decision": DecisionTreeClassifier(max_depth=6, min_samples_leaf=5, random_state=SEED),
-        "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, learning_rate=0.05,
-                                                          max_depth=2, random_state=SEED),
+        "Regresion logistica": make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), LogisticRegression(max_iter=2000, C=1.0)),
+        "SVM RBF": make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), SVC(C=1.0, random_state=SEED)),
+        "KNN (k=7)": make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), KNeighborsClassifier(n_neighbors=7)),
+        "Arbol de decision": make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), DecisionTreeClassifier(max_depth=6, min_samples_leaf=3, random_state=SEED)),
+        "Gradient Boosting": make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), GradientBoostingClassifier(n_estimators=100, learning_rate=0.05, max_depth=2, random_state=SEED)),
     }
     classification = {}
     for name, model in classifiers.items():
@@ -81,15 +72,14 @@ def run_experiment(output: Path | None = None, dataset: Path = DEFAULT_OUTPUT) -
             "roc_auc": round(float(roc_auc_score(y_test, scores)), 4),
         }
 
-    # Regresion estima duracion a partir de variables de llamada/pedido conocidas.
+    # Regresion estima minutos de preparacion con el tamano y mezcla del pedido.
     x_reg = np.array([
         [int(row["items_solicitados"]), int(row["items_distintos"]),
-         int(row["intentos_aclaracion"]),
-         1.0 if row["canal"] == "telefono" else 0.0,
-         1.0 if row["canal"] == "whatsapp" else 0.0]
+         sum(1 for item in row["productos_pedido"].split(" | ") if item),
+         float(row["subtotal_soles"])]
         for row in rows
     ], dtype=float)
-    y_reg = np.array([int(row["duracion_segundos"]) for row in rows])
+    y_reg = np.array([int(row["minutos_preparacion"]) for row in rows])
     xr_train, xr_test, yr_train, yr_test = train_test_split(
         x_reg, y_reg, test_size=0.25, random_state=SEED,
     )
@@ -115,7 +105,9 @@ def run_experiment(output: Path | None = None, dataset: Path = DEFAULT_OUTPUT) -
         "seed": SEED,
         "dataset": str(dataset),
         "sample_size_calls": len(rows),
-        "confirmed_calls": int(y_cls.sum()),
+        "messages_requiring_clarification": int(y_cls.sum()),
+        "target_classification": "requiere_aclaracion",
+        "target_regression": "minutos_preparacion",
         "train_test": {"classification_train": len(y_train),
                        "classification_test": len(y_test),
                        "regression_samples": len(rows)},

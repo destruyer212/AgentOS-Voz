@@ -19,7 +19,8 @@ FIELDS = [
     "call_id", "fecha_hora", "canal", "duracion_segundos", "intentos_aclaracion",
     "items_solicitados", "items_distintos", "unidades_totales", "tipo_entrega",
     "subtotal_soles", "delivery_soles", "total_soles", "resultado", "pedido_confirmado",
-    "productos_pedido", "metodo_pago",
+    "productos_pedido", "metodo_pago", "mensaje_cliente", "requiere_aclaracion",
+    "plato_agotado", "alternativa_elegida", "minutos_preparacion",
 ]
 
 
@@ -47,6 +48,12 @@ def generate_calls(output: Path = DEFAULT_OUTPUT, count: int = 250) -> list[dict
         delivery_fee = round(rng.choice([5.0, 6.0, 7.0]), 2) if fulfillment == "delivery" else 0.0
         total = round(subtotal + delivery_fee, 2)
         clarifications = rng.choices([0, 1, 2, 3], [0.42, 0.37, 0.17, 0.04])[0]
+        needs_clarification = rng.random() < (0.3 + 0.15 * clarifications)
+        if rng.random() < 0.12:
+            needs_clarification = not needs_clarification
+        prep_minutes = max(8, int(7 + 4 * len(order_items) + 1.7 * sum(q for _, q in order_items)
+                               + 2.2 * len({p['category'] for p, _ in order_items})
+                               + rng.gauss(0, 2.5)))
         # A stable, plausible label rule with noise; only pre-outcome fields feed models.
         probability = 0.88 - 0.12 * clarifications - (0.08 if channel == "telefono" else 0)
         confirmed = rng.random() < max(0.35, min(0.95, probability))
@@ -73,6 +80,22 @@ def generate_calls(output: Path = DEFAULT_OUTPUT, count: int = 250) -> list[dict
                 for product, qty in order_items
             ),
             "metodo_pago": rng.choice(["efectivo", "yape", "plin", "tarjeta"]) if confirmed else "",
+            "mensaje_cliente": rng.choice([
+                "Quiero un cuarto de pollo para recoger",
+                "Me das pollo con papas, el de siempre",
+                "Quiero dos chaufa de pollo y una Inca Kola",
+                "Un plato sin cebolla por favor",
+                "Quiero el combo familiar para delivery",
+                "Quiero pollo, no recuerdo cual plato",
+                "Mandame el combo grande, cuanto cuesta",
+                "Quiero uno de esos con papas, para mas tarde",
+                "Dame pollo a la brasa pero no se si entero o medio",
+                "Quiero pollo con papas, por favor",
+            ]),
+            "requiere_aclaracion": "1" if needs_clarification else "0",
+            "plato_agotado": "Pollo a la Brasa" if number % 5 == 0 else "",
+            "alternativa_elegida": "Pollo Ricky + Anticucho" if number % 5 == 0 else "",
+            "minutos_preparacion": str(prep_minutes),
         })
 
     output.parent.mkdir(parents=True, exist_ok=True)

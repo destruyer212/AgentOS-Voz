@@ -3,7 +3,9 @@
   "seed": 42,
   "dataset": "C:\\innovacion y transformacion digital\\AgentOS Voz\\backend\\apf3\\data\\llamadas_sinteticas_250.csv",
   "sample_size_calls": 250,
-  "confirmed_calls": 190,
+  "messages_requiring_clarification": 118,
+  "target_classification": "requiere_aclaracion",
+  "target_regression": "minutos_preparacion",
   "train_test": {
     "classification_train": 187,
     "classification_test": 63,
@@ -11,56 +13,56 @@
   },
   "classification": {
     "Regresion logistica": {
-      "accuracy": 0.7619,
-      "precision": 0.7797,
-      "recall": 0.9583,
-      "f1": 0.8598,
-      "roc_auc": 0.6653
+      "accuracy": 0.4762,
+      "precision": 0.44,
+      "recall": 0.3667,
+      "f1": 0.4,
+      "roc_auc": 0.5111
     },
     "SVM RBF": {
-      "accuracy": 0.7619,
-      "precision": 0.7797,
-      "recall": 0.9583,
-      "f1": 0.8598,
-      "roc_auc": 0.6417
+      "accuracy": 0.4762,
+      "precision": 0.44,
+      "recall": 0.3667,
+      "f1": 0.4,
+      "roc_auc": 0.4465
     },
     "KNN (k=7)": {
-      "accuracy": 0.7619,
-      "precision": 0.8113,
-      "recall": 0.8958,
-      "f1": 0.8515,
-      "roc_auc": 0.6285
+      "accuracy": 0.4127,
+      "precision": 0.3158,
+      "recall": 0.2,
+      "f1": 0.2449,
+      "roc_auc": 0.4545
     },
     "Arbol de decision": {
-      "accuracy": 0.7302,
-      "precision": 0.7818,
-      "recall": 0.8958,
-      "f1": 0.835,
-      "roc_auc": 0.5097
+      "accuracy": 0.4762,
+      "precision": 0.44,
+      "recall": 0.3667,
+      "f1": 0.4,
+      "roc_auc": 0.4889
     },
     "Gradient Boosting": {
-      "accuracy": 0.746,
-      "precision": 0.7759,
-      "recall": 0.9375,
-      "f1": 0.8491,
-      "roc_auc": 0.5771
+      "accuracy": 0.4762,
+      "precision": 0.44,
+      "recall": 0.3667,
+      "f1": 0.4,
+      "roc_auc": 0.5116
     }
   },
   "regression": {
     "Lineal": {
-      "mae": 22.8205,
-      "rmse": 28.033,
-      "r2": 0.4876
+      "mae": 2.1256,
+      "rmse": 2.5577,
+      "r2": 0.8232
     },
     "No lineal (polinomica grado 2)": {
-      "mae": 22.9475,
-      "rmse": 28.8298,
-      "r2": 0.458
+      "mae": 2.142,
+      "rmse": 2.5896,
+      "r2": 0.8188
     },
     "No lineal (Random Forest)": {
-      "mae": 24.4937,
-      "rmse": 31.0937,
-      "r2": 0.3696
+      "mae": 2.3899,
+      "rmse": 2.8861,
+      "r2": 0.7749
     }
   },
   "interpretation": "Metrics demonstrate a reproducible comparison only. They are not evidence of production performance; repeat with approved, anonymized labeled business data."
