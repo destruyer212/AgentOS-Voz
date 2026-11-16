@@ -1,0 +1,67 @@
+{
+  "data_notice": "SYNTHETIC DEMONSTRATION DATA; NOT REAL AGENTOS CALL OR ORDER DATA",
+  "seed": 42,
+  "dataset": "C:\\innovacion y transformacion digital\\AgentOS Voz\\backend\\apf3\\data\\llamadas_sinteticas_250.csv",
+  "sample_size_calls": 250,
+  "confirmed_calls": 190,
+  "train_test": {
+    "classification_train": 187,
+    "classification_test": 63,
+    "regression_samples": 250
+  },
+  "classification": {
+    "Regresion logistica": {
+      "accuracy": 0.7619,
+      "precision": 0.7797,
+      "recall": 0.9583,
+      "f1": 0.8598,
+      "roc_auc": 0.6653
+    },
+    "SVM RBF": {
+      "accuracy": 0.7619,
+      "precision": 0.7797,
+      "recall": 0.9583,
+      "f1": 0.8598,
+      "roc_auc": 0.6417
+    },
+    "KNN (k=7)": {
+      "accuracy": 0.7619,
+      "precision": 0.8113,
+      "recall": 0.8958,
+      "f1": 0.8515,
+      "roc_auc": 0.6285
+    },
+    "Arbol de decision": {
+      "accuracy": 0.7302,
+      "precision": 0.7818,
+      "recall": 0.8958,
+      "f1": 0.835,
+      "roc_auc": 0.5097
+    },
+    "Gradient Boosting": {
+      "accuracy": 0.746,
+      "precision": 0.7759,
+      "recall": 0.9375,
+      "f1": 0.8491,
+      "roc_auc": 0.5771
+    }
+  },
+  "regression": {
+    "Lineal": {
+      "mae": 22.8205,
+      "rmse": 28.033,
+      "r2": 0.4876
+    },
+    "No lineal (polinomica grado 2)": {
+      "mae": 22.9475,
+      "rmse": 28.8298,
+      "r2": 0.458
+    },
+    "No lineal (Random Forest)": {
+      "mae": 24.4937,
+      "rmse": 31.0937,
+      "r2": 0.3696
+    }
+  },
+  "interpretation": "Metrics demonstrate a reproducible comparison only. They are not evidence of production performance; repeat with approved, anonymized labeled business data."
+}
