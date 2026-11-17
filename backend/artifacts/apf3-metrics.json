@@ -3,7 +3,7 @@
   "seed": 42,
   "dataset": "C:\\innovacion y transformacion digital\\AgentOS Voz\\backend\\apf3\\data\\llamadas_sinteticas_250.csv",
   "sample_size_calls": 250,
-  "messages_requiring_clarification": 118,
+  "messages_requiring_clarification": 130,
   "target_classification": "requiere_aclaracion",
   "target_regression": "minutos_preparacion",
   "train_test": {
@@ -13,56 +13,56 @@
   },
   "classification": {
     "Regresion logistica": {
-      "accuracy": 0.4762,
-      "precision": 0.44,
-      "recall": 0.3667,
-      "f1": 0.4,
-      "roc_auc": 0.5111
+      "accuracy": 0.8413,
+      "precision": 0.8286,
+      "recall": 0.8788,
+      "f1": 0.8529,
+      "roc_auc": 0.8076
     },
     "SVM RBF": {
-      "accuracy": 0.4762,
-      "precision": 0.44,
-      "recall": 0.3667,
-      "f1": 0.4,
-      "roc_auc": 0.4465
+      "accuracy": 0.8413,
+      "precision": 0.8286,
+      "recall": 0.8788,
+      "f1": 0.8529,
+      "roc_auc": 0.8076
     },
     "KNN (k=7)": {
-      "accuracy": 0.4127,
-      "precision": 0.3158,
-      "recall": 0.2,
-      "f1": 0.2449,
-      "roc_auc": 0.4545
+      "accuracy": 0.8413,
+      "precision": 0.8286,
+      "recall": 0.8788,
+      "f1": 0.8529,
+      "roc_auc": 0.8162
     },
     "Arbol de decision": {
-      "accuracy": 0.4762,
-      "precision": 0.44,
-      "recall": 0.3667,
-      "f1": 0.4,
-      "roc_auc": 0.4889
+      "accuracy": 0.8413,
+      "precision": 0.8286,
+      "recall": 0.8788,
+      "f1": 0.8529,
+      "roc_auc": 0.8323
     },
     "Gradient Boosting": {
-      "accuracy": 0.4762,
-      "precision": 0.44,
-      "recall": 0.3667,
-      "f1": 0.4,
-      "roc_auc": 0.5116
+      "accuracy": 0.8413,
+      "precision": 0.8286,
+      "recall": 0.8788,
+      "f1": 0.8529,
+      "roc_auc": 0.8066
     }
   },
   "regression": {
     "Lineal": {
-      "mae": 2.1256,
-      "rmse": 2.5577,
-      "r2": 0.8232
+      "mae": 2.333,
+      "rmse": 2.9708,
+      "r2": 0.7937
     },
     "No lineal (polinomica grado 2)": {
-      "mae": 2.142,
-      "rmse": 2.5896,
-      "r2": 0.8188
+      "mae": 2.4358,
+      "rmse": 3.0276,
+      "r2": 0.7858
     },
     "No lineal (Random Forest)": {
-      "mae": 2.3899,
-      "rmse": 2.8861,
-      "r2": 0.7749
+      "mae": 2.8026,
+      "rmse": 3.5676,
+      "r2": 0.7025
     }
   },
   "interpretation": "Metrics demonstrate a reproducible comparison only. They are not evidence of production performance; repeat with approved, anonymized labeled business data."
