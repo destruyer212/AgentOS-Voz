@@ -1,0 +1,118 @@
+name: Deploy backend to AWS production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_no_active_calls:
+        description: Confirmar que no hay llamadas activas para poder reiniciar el backend
+        type: boolean
+        required: true
+        default: false
+      confirm_no_pending_migrations:
+        description: Confirmar que este cambio no requiere migraciones de base de datos
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: agentos-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_no_active_calls && inputs.confirm_no_pending_migrations }}
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      INSTANCE_ID: i-0a99642bc018609b0
+      SECURITY_GROUP_ID: sg-0d68e40b402f0fbd7
+      INSTANCE_IP: 23.22.118.94
+      APP_DIR: /home/ubuntu/AgentOS-Voz/backend
+    steps:
+      - name: Require successful CI on this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow backend-ci.yml --branch main --limit 1 --json headSha,conclusion,status)
+          echo "$latest" | jq .
+          test "$(echo "$latest" | jq -r '.[0].headSha')" = "$GITHUB_SHA"
+          test "$(echo "$latest" | jq -r '.[0].conclusion')" = success
+          test "$(echo "$latest" | jq -r '.[0].status')" = completed
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Package backend without runtime secrets or local state
+        run: |
+          set -euo pipefail
+          tar -czf "$RUNNER_TEMP/backend.tar.gz" -C backend \
+            --exclude='.env' --exclude='.env.*' --exclude='.venv' \
+            --exclude='__pycache__' --exclude='*.py[cod]' \
+            --exclude='*.db' --exclude='.pytest_cache' --exclude='.ruff_cache' .
+
+      - name: Get runner public IP
+        run: echo "RUNNER_IP=$(curl --fail --silent --show-error https://api.ipify.org)" >> "$GITHUB_ENV"
+
+      - name: Configure short-lived AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: agentos-deploy-${{ github.run_id }}
+
+      - name: Open SSH only to this runner
+        id: ingress
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SECURITY_GROUP_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=GitHubActions-${GITHUB_RUN_ID}}]"
+
+      - name: Deploy, verify health, and rollback source on failure
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/agentos-deploy-key"
+          ssh-keygen -q -t ed25519 -N '' -f "$key"
+          az=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' --output text)
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" --instance-os-user ubuntu \
+            --availability-zone "$az" --ssh-public-key "file://${key}.pub" \
+            --region "$AWS_REGION" >/dev/null
+
+          known_hosts="$RUNNER_TEMP/agentos-known-hosts"
+          printf '[%s]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFjrddV0K8TTI4LBQcthKvqLLolq6U2uF3jGkRNXMs2 root@ip-172-31-18-203\n' "$INSTANCE_IP" > "$known_hosts"
+          ssh_opts=(-i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" -o ConnectTimeout=10)
+
+          scp "${ssh_opts[@]}" "$RUNNER_TEMP/backend.tar.gz" "ubuntu@${INSTANCE_IP}:/tmp/agentos-backend-${GITHUB_RUN_ID}.tar.gz"
+          ssh "${ssh_opts[@]}" "ubuntu@${INSTANCE_IP}" \
+            "APP_DIR='$APP_DIR' ARCHIVE='/tmp/agentos-backend-${GITHUB_RUN_ID}.tar.gz' RUN_ID='${GITHUB_RUN_ID}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          backup="/tmp/agentos-backend-rollback-${RUN_ID}.tar.gz"
+          tar -czf "$backup" --exclude='./.env' --exclude='./.env.*' --exclude='./.venv' --exclude='./__pycache__' --exclude='./*.db' -C "$APP_DIR" .
+          tar -xzf "$ARCHIVE" -C "$APP_DIR"
+          if sudo systemctl restart agentos-voz && \
+             sudo systemctl is-active --quiet agentos-voz && \
+             curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-connrefused http://127.0.0.1:8000/health; then
+            rm -f "$backup" "$ARCHIVE"
+            exit 0
+          fi
+          echo 'Health check failed; restoring previous backend source.' >&2
+          tar -xzf "$backup" -C "$APP_DIR"
+          sudo systemctl restart agentos-voz
+          rm -f "$ARCHIVE"
+          exit 1
+          REMOTE
+
+      - name: Close temporary SSH ingress
+        if: ${{ always() && steps.ingress.outcome == 'success' }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$SECURITY_GROUP_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32}]"

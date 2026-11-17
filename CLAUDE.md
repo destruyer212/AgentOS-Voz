@@ -17,16 +17,20 @@ restaurante El Olivar Grill (Puente Piedra, Lima, Peru).
 - Corre como servicio systemd (`agentos-voz.service`) en
   `/home/ubuntu/AgentOS-Voz/backend`, con su propio `.env` en el servidor
   (nunca en el repo). Sigue arriba solo, sobrevive reinicios del servidor.
-- **No hay CI/CD.** El deploy es manual: tar del `backend/` (sin `.env`, sin
-  `.venv`, sin cachés) → `scp` al EC2 → extraer sobre el directorio ya
-  desplegado → `sudo systemctl restart agentos-voz`. Antes de restart,
-  chequear que no haya una llamada en curso (`ss -tnp | grep :8000`).
-- **Acceso SSH:** no hay `.pem` disponible. Se entra via **AWS EC2 Instance
-  Connect** (`aws ec2-instance-connect send-ssh-public-key`, clave temporal
-  ed25519 valida ~60s) con perfil AWS `default`. El grupo de seguridad
-  (`sg-0d68e40b402f0fbd7`) solo permite SSH desde la IP actual del que se
-  conecta — la IP del usuario cambia seguido, hay que refrescar la regla de
-  ingreso (`revoke` + `authorize` puerto 22) antes de cada sesion.
+- **CI/CD:** GitHub Actions corre compilacion, Ruff, pytest y un smoke test
+  efimero. El backend tiene un workflow manual en Actions para desplegar a
+  produccion: exige confirmar que no hay llamadas activas ni migraciones
+  pendientes, verifica CI sobre el mismo commit, usa OIDC con rol AWS
+  limitado, abre SSH temporal al runner, respalda codigo y comprueba `/health`
+  despues del reinicio (restaura el codigo previo si falla). El procedimiento
+  previo era manual: tar del `backend/` (sin `.env`, sin `.venv`, sin caches)
+  → `scp` al EC2 → extraer → `sudo systemctl restart agentos-voz`.
+  **El workflow nuevo todavia no se ha ejecutado contra produccion.**
+- **Acceso SSH:** no hay `.pem` disponible. El workflow usa **AWS EC2 Instance
+  Connect** con clave ed25519 temporal y OIDC; el grupo de seguridad
+  (`sg-0d68e40b402f0fbd7`) permite SSH unicamente desde la IP efimera del
+  runner durante el despliegue y la regla se retira al terminar. Para acceso
+  interactivo manual se sigue usando EC2 Instance Connect.
 
 ## La base de datos es PostgreSQL real, no SQLite
 

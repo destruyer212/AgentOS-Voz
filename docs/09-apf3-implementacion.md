@@ -5,8 +5,15 @@ que atiende llamadas o pedidos de produccion.
 
 ## Estado de evidencia
 
-- CI backend: GitHub Actions ejecuta compilacion Python, Ruff y pytest en
-  push/PR a `main`; no despliega a staging.
+- CI backend: GitHub Actions ejecuta compilacion Python, Ruff, pytest y un
+  smoke test que inicia la API en un entorno efimero y consulta `/health`.
+- AWS produccion: el servicio ya esta desplegado y atendiendo trafico real. Se
+  agrego un workflow manual y protegido para desplegar a esa instancia despues
+  de confirmar que no hay llamadas activas ni migraciones pendientes. Verifica
+  que CI paso sobre el mismo commit, hace respaldo del codigo, comprueba salud
+  tras reiniciar y restaura el codigo anterior si falla el chequeo.
+- El workflow de produccion no se ha ejecutado todavia. No hay un staging
+  separado; el smoke test de Actions es temporal y no sustituye staging.
 - Busqueda: BFS, DFS, A* y Hill Climbing encuentran alternativas cuando un
   producto solicitado esta agotado.
 - Clasificacion: regresion logistica, SVM, KNN, arbol y Gradient Boosting
@@ -50,10 +57,18 @@ anonimizarla, definir etiquetas sin fuga de informacion, acordar variables
 predictoras disponibles antes del resultado y repetir la comparacion con una
 particion de datos adecuada. No se leen automaticamente bases de produccion.
 
-## Cloud/DevOps que aun requiere configuracion
+## Cloud/DevOps y limites de la evidencia
 
-El CI valida codigo; no despliega el backend. Antes de automatizar despliegue
-AWS se necesita definir credenciales de GitHub Actions con minimo privilegio,
-estrategia de rollback y manejo de llamadas en curso. El frontend mantiene el
-deploy automatico configurado en Vercel. La infraestructura productiva no fue
-modificada por esta implementacion.
+El frontend mantiene despliegue automatico configurado en Vercel. AWS usa
+OIDC de GitHub Actions con un rol limitado a la instancia y al grupo de
+seguridad del backend; no se guardan llaves AWS de larga duracion en GitHub.
+El deploy del backend es manual desde Actions para no reiniciar una instancia
+que atiende llamadas sin confirmar primero que el momento es seguro. El
+workflow abre SSH solo para la IP efimera del runner y retira esa regla al
+finalizar. No se ha desplegado codigo nuevo a produccion con este workflow.
+
+Para probar un deploy: abrir Actions > Deploy backend to AWS production,
+elegir `main` y marcar las dos confirmaciones solo despues de comprobar que no
+hay llamadas activas y que el cambio no requiere migraciones. La evidencia
+reproducible del smoke test de CI no implica que ya se haya ejecutado el
+workflow de produccion.

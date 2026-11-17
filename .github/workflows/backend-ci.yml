@@ -5,11 +5,11 @@ on:
     branches: [main]
     paths:
       - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "backend/**"
-      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/**"
 
 permissions:
   contents: read
