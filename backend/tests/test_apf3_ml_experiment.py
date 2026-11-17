@@ -15,6 +15,8 @@ def test_experiment_reports_all_required_model_families(tmp_path):
     assert report["sample_size_calls"] == 250
     assert len(generated) == 250
     assert report["messages_requiring_clarification"] > 0
+    assert report["messages_requiring_clarification"] < 250
+    assert len({row["mensaje_cliente"] for row in generated}) > 10
     assert all(float(row["total_soles"]) >= float(row["subtotal_soles"])
                for row in generated if row["pedido_confirmado"] == "1")
     assert {"Regresion logistica", "SVM RBF", "KNN (k=7)",
@@ -27,4 +29,8 @@ def test_experiment_reports_all_required_model_families(tmp_path):
                for metrics in report["classification"].values())
     assert all("rmse" in metrics and "r2" in metrics
                for metrics in report["regression"].values())
+    assert all(0 <= metrics["accuracy"] <= 1
+               for metrics in report["classification"].values())
+    assert all(metrics["mae"] > 0 for metrics in report["regression"].values())
+    assert any(metrics["accuracy"] < 1 for metrics in report["classification"].values())
     assert (tmp_path / "metrics.json").is_file()
