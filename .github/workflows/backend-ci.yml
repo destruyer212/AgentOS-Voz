@@ -35,3 +35,27 @@ jobs:
         run: ruff check app apf3 tests
       - name: Test
         run: pytest -q
+      - name: Smoke test in ephemeral environment
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-smoke.db
+          ENVIRONMENT: test
+          LLM_PROVIDER: rule_based
+        run: |
+          set -euo pipefail
+          uvicorn app.main:app --host 127.0.0.1 --port 8765 > /tmp/agentos-uvicorn.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8765/health > /tmp/agentos-health.json; then
+              cat /tmp/agentos-health.json
+              exit 0
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat /tmp/agentos-uvicorn.log
+              exit 1
+            fi
+            sleep 2
+          done
+          cat /tmp/agentos-uvicorn.log
+          echo "API no respondió en 60 segundos" >&2
+          exit 1
